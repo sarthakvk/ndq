@@ -3,6 +3,8 @@ const Io = std.Io;
 
 const ndq = @import("ndq");
 
+const ndjson = ndq.ndjson;
+
 pub fn main(init: std.process.Init) !void {
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -11,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
 
     const allocator = gpa.allocator();
 
-    var jsonReader = try ndq.NdJsonReader.init(allocator, init.io, filename);
+    var jsonReader = try ndjson.NdJsonReader.init(allocator, init.io, filename);
     defer jsonReader.deinit();
     
     while (try jsonReader.next(allocator)) |json| {
