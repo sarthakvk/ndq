@@ -17,9 +17,15 @@ pub const NdJsonReader = struct {
         .parse_numbers = true,
     },
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath: []const u8) !NdJsonReader {
-        var file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
-        errdefer file.close(io);
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, filepath_op: ?[]const u8) !NdJsonReader {
+        var file: std.Io.File = undefined;
+
+        if (filepath_op) |filepath| {
+            file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
+            errdefer file.close(io);
+        } else {
+            file = std.Io.File.stdin();
+        }
 
         const buffer = try allocator.alloc(u8, NdJsonReaderBufferSize);
         errdefer allocator.free(buffer);
@@ -92,13 +98,11 @@ test NdJsonReader {
         const filepath = "resources/ndjson_reader_test_invalid.jsonl";
         var reader = try NdJsonReader.init(gpa, io, filepath);
         defer reader.deinit();
-        
+
         const UEOI_line: usize = 1;
         const SE_line: usize = 5;
-        
 
         for (0..10) |row| {
-
             if (row == UEOI_line) {
                 try testing.expectError(json.Scanner.Error.UnexpectedEndOfInput, reader.next(gpa));
                 continue;
@@ -106,7 +110,6 @@ test NdJsonReader {
                 try testing.expectError(json.Scanner.Error.SyntaxError, reader.next(gpa));
                 continue;
             }
-
 
             const pval = try reader.next(gpa) orelse return error.NoRowFound;
             defer pval.deinit();
@@ -128,5 +131,4 @@ test NdJsonReader {
         }
         try testing.expectEqual(null, try reader.next(gpa));
     }
-
 }

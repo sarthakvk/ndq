@@ -6,4 +6,4 @@
 
 ## Done
 - NDJson file reader
-
+- NDJson unit tests
