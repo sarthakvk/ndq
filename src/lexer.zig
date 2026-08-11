@@ -1,6 +1,5 @@
 /// Lexar for ndq
-/// Right now, this lexar only supports basic single key queries.
-/// `key <comparison> value`, =, <, <=, >, >= and != are supported.
+
 const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;
