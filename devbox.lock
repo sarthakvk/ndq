@@ -4,6 +4,70 @@
     "github:NixOS/nixpkgs/nixpkgs-unstable": {
       "last_modified": "2026-08-01T00:04:45Z",
       "resolved": "github:NixOS/nixpkgs/f8e81fc7eb063db454f563cdd596fb96a5ad1497?lastModified=1785542685&narHash=sha256-sjfvXMbG5pCFgpvw2OZAFcZiTvrppCWvnB6cuGrSY08%3D"
+    },
+    "zig@latest": {
+      "last_modified": "2026-08-12T11:28:58Z",
+      "resolved": "github:NixOS/nixpkgs/044bfe75bfe4c7bbe043dc17b5e42ea823b84a09#zig",
+      "source": "devbox-search",
+      "version": "0.16.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/028ijby1w76fyi94xwanqp74czbw7iw3-zig-0.16.0",
+              "default": true
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/p3q9b5lpy4l83xmrmcj2yqsqcbmq20wl-zig-0.16.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/028ijby1w76fyi94xwanqp74czbw7iw3-zig-0.16.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/91iv42f62ba2k52ry9pr25ygyf2h44b3-zig-0.16.0",
+              "default": true
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/7dh777vm2f98yf6gvbw83ad591b81c16-zig-0.16.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/91iv42f62ba2k52ry9pr25ygyf2h44b3-zig-0.16.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/7wsm80i713618s84j1hw2nk2v58zf081-zig-0.16.0",
+              "default": true
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/6h4nc1xc8kr3wfn7f4f6ma4my48mn9qk-zig-0.16.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/7wsm80i713618s84j1hw2nk2v58zf081-zig-0.16.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/fvlqxywq2p7h2147m0wdp8g0m38zdprp-zig-0.16.0",
+              "default": true
+            },
+            {
+              "name": "doc",
+              "path": "/nix/store/i8sqazalp18icql2lw1l5y3glq8a1si3-zig-0.16.0-doc"
+            }
+          ],
+          "store_path": "/nix/store/fvlqxywq2p7h2147m0wdp8g0m38zdprp-zig-0.16.0"
+        }
+      }
     }
   }
 }
