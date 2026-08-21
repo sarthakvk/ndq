@@ -21,6 +21,8 @@ const operators_list = [_]Keyword{
     .{ .id_str = "<=", .id = Identifier.__lte__ },
     .{ .id_str = ">=", .id = Identifier.__gte__ },
     .{ .id_str = ".", .id = Identifier.__period__ },
+    .{ .id_str = "(", .id = Identifier.__lparen__ },
+    .{ .id_str = ")", .id = Identifier.__rparen__ },
 };
 
 const operators_list_kv = blk: {
@@ -53,6 +55,8 @@ pub const Identifier = enum {
     __gte__,
     __period__,
     __text__,
+    __lparen__,
+    __rparen__,
 };
 
 pub const TokenType = enum {
@@ -300,7 +304,7 @@ test "tokenize splits bare words on delimiters and operators" {
             },
         },
         .{
-            .query = "= != & | < <= > >= .",
+            .query = "= != & | < <= > >= . ) (",
             .expected = &.{
                 .{ .type = .operator, .value = "=", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .operator, .value = "!=", .start_offset = 2, .end_offset = 4 },
@@ -311,6 +315,8 @@ test "tokenize splits bare words on delimiters and operators" {
                 .{ .type = .operator, .value = ">", .start_offset = 14, .end_offset = 15 },
                 .{ .type = .operator, .value = ">=", .start_offset = 16, .end_offset = 18 },
                 .{ .type = .operator, .value = ".", .start_offset = 19, .end_offset = 20 },
+                .{ .type = .operator, .value = ")", .start_offset = 21, .end_offset = 22 },
+                .{ .type = .operator, .value = "(", .start_offset = 23, .end_offset = 24 },
             },
         },
         // Operators split a bare word without whitespace, longest match first.
@@ -321,6 +327,16 @@ test "tokenize splits bare words on delimiters and operators" {
                 .{ .type = .operator, .value = "<=", .start_offset = 1, .end_offset = 3 },
                 .{ .type = .operator, .value = ">", .start_offset = 3, .end_offset = 4 },
                 .{ .type = .string, .value = "b", .start_offset = 4, .end_offset = 5 },
+            },
+        },
+        .{
+            .query = "a(b)c",
+            .expected = &.{
+                .{ .type = .string, .value = "a", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .value = "(", .start_offset = 1, .end_offset = 2 },
+                .{ .type = .string, .value = "b", .start_offset = 2, .end_offset = 3 },
+                .{ .type = .operator, .value = ")", .start_offset = 3, .end_offset = 4 },
+                .{ .type = .string, .value = "c", .start_offset = 4, .end_offset = 5 },
             },
         },
         .{
@@ -406,6 +422,14 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
                 .{ .type = .string, .value = "a.b", .start_offset = 0, .end_offset = 5 },
                 .{ .type = .operator, .value = "=", .start_offset = 6, .end_offset = 7 },
                 .{ .type = .integer, .value = "1", .start_offset = 8, .end_offset = 9 },
+            },
+        },
+        .{
+            .query = "\"a(b)\" = 1",
+            .expected = &.{
+                .{ .type = .string, .value = "a(b)", .start_offset = 0, .end_offset = 6 },
+                .{ .type = .operator, .value = "=", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .integer, .value = "1", .start_offset = 9, .end_offset = 10 },
             },
         },
         .{
