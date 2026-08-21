@@ -1,5 +1,4 @@
 /// Lexar for ndq
-
 const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;
@@ -12,6 +11,7 @@ pub const Keyword = struct {
 };
 
 const operators_list = [_]Keyword{
+    .{ .id_str = "!", .id = Identifier.__not__ },
     .{ .id_str = "=", .id = Identifier.__eq__ },
     .{ .id_str = "!=", .id = Identifier.__neq__ },
     .{ .id_str = "&", .id = Identifier.__and__ },
@@ -45,6 +45,7 @@ const double_quote = '\"';
 const escape = '\\';
 
 pub const Identifier = enum {
+    __not__,
     __eq__,
     __neq__,
     __and__,
@@ -386,6 +387,33 @@ test "tokenize splits bare words on delimiters and operators" {
     });
 }
 
+test "tokenize recognizes unary not and preserves longest operator matches" {
+    try expectCases(&.{
+        .{
+            .query = "!active",
+            .expected = &.{
+                .{ .type = .operator, .value = "!", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .string, .value = "active", .start_offset = 1, .end_offset = 7 },
+            },
+        },
+        .{
+            .query = "!!active",
+            .expected = &.{
+                .{ .type = .operator, .value = "!", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .value = "!", .start_offset = 1, .end_offset = 2 },
+                .{ .type = .string, .value = "active", .start_offset = 2, .end_offset = 8 },
+            },
+        },
+        .{
+            .query = "!=active",
+            .expected = &.{
+                .{ .type = .operator, .value = "!=", .start_offset = 0, .end_offset = 2 },
+                .{ .type = .string, .value = "active", .start_offset = 2, .end_offset = 8 },
+            },
+        },
+    });
+}
+
 test "tokenize keeps quoted text whole and decodes its escapes" {
     try expectCases(&.{
         .{
@@ -542,7 +570,7 @@ test "tokenize classifies token types" {
         // ordinary characters in a bare word.
         .{ .value = "@#$", .type = .string },
         .{ .value = ",,,", .type = .string },
-        .{ .value = "a!b", .type = .string },
+        .{ .value = "a?b", .type = .string },
         .{ .value = "a-b", .type = .string },
     };
 
