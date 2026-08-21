@@ -16,8 +16,8 @@ On success, the parser returns an abstract syntax tree (AST). This confirms that
 
 ## Grammar
 
-```ebnf
-(* Precedence: () > ! > & > | *)
+```abnf
+; Precedence: () > ! > & > |
 query = or_expr
 
 or_expr = and_expr, {"|", and_expr}
@@ -28,14 +28,15 @@ not_expr = predicate | ("!", not_expr)
 
 predicate = comp | "(", or_expr, ")"
 
-(* Any combination of fields and values is valid; this makes value <op> value and field <op> field valid too. *)
+; Any combination of fields and values is valid
+; this makes value <op> value and field <op> field valid too.
 comp = term, op, term
 
 term = (field | value)
 
 op = "=" | "!=" | "<" | "<=" | ">" | ">="
 
-(* Allow specifying nested fields with . notation. *)
+; Allow specifying nested fields with . notation.
 field = identifier, {".", identifier}
 
 value = string | number | "true" | "false" | "null"
