@@ -23,6 +23,7 @@ const operators_list = [_]Keyword{
     .{ .id_str = ".", .id = Identifier.__period__ },
     .{ .id_str = "(", .id = Identifier.__lparen__ },
     .{ .id_str = ")", .id = Identifier.__rparen__ },
+    .{ .id_str = "@", .id = Identifier.__at_rate__ },
 };
 
 const operators_list_kv = blk: {
@@ -46,6 +47,7 @@ const escape = '\\';
 
 pub const Identifier = enum {
     __not__,
+    __at_rate__,
     __eq__,
     __neq__,
     __and__,
@@ -61,8 +63,7 @@ pub const Identifier = enum {
 };
 
 pub const TokenType = enum {
-    string,
-    integer,
+    value,
     operator,
 };
 
@@ -72,23 +73,21 @@ pub const TokenizationError = error{
 
 pub const Token = struct {
     type: TokenType,
-    value: []const u8,
+    raw: []const u8,
     start_offset: usize,
     end_offset: usize,
 };
 
 fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offset: usize, end_offset: usize) Token {
-    const ttype: TokenType = if (inside_quote)
-        .string
-    else if (operator_map.get(s) != null)
-        .operator
-    else if (utils.isInt(s))
-        .integer
-    else
-        .string;
-
     var written: usize = 0;
     var open_escape = false;
+
+    const ttype: TokenType = if (inside_quote)
+        .value
+    else if (operator_map.get(s) != null)
+        .operator
+    else
+        .value;
 
     for (s) |c| {
         if (inside_quote and (c == escape or open_escape)) {
@@ -102,7 +101,7 @@ fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offse
 
     const token = Token{
         .type = ttype,
-        .value = buf_slice.*[0..written],
+        .raw = buf_slice.*[0..written],
         .start_offset = start_offset,
         .end_offset = end_offset,
     };
@@ -143,29 +142,34 @@ pub const Tokenizer = struct {
                 continue;
             }
 
-            const cur_slice = query[start..i];
             if (open_quote) {
+                // When quote is open
+                // The lexar will advance until an unescaped `double_quote` is detected
+                // Once the closing quote is detected, the lexer will extract the quoted token.
                 if (c == double_quote) {
-                    // token: [start-1, i+1)
-                    const token = extractToken(cur_slice, &buf_slice, true, start - 1, i + 1);
+                    // token: [start, i+1)
+                    const token = extractToken(query[start .. i + 1], &buf_slice, true, start, i + 1);
                     try list.append(allocator, token);
                     start = i + 1;
                     open_quote = false;
                 }
                 i += 1;
             } else if (c == double_quote) {
+                // This is an opening quote
+                // extract token till [start, i).
+
                 if (start < i) {
                     // token: [start, i)
-                    const token = extractToken(cur_slice, &buf_slice, false, start, i);
+                    const token = extractToken(query[start..i], &buf_slice, false, start, i);
                     try list.append(allocator, token);
                 }
                 open_quote = true;
-                i += 1;
                 start = i;
+                i += 1;
             } else if (std.mem.findScalar(u8, &delimeters, c) != null) {
                 if (start < i) {
                     // token: [start, i)
-                    const token = extractToken(cur_slice, &buf_slice, false, start, i);
+                    const token = extractToken(query[start..i], &buf_slice, false, start, i);
                     try list.append(allocator, token);
                 }
                 i += 1;
@@ -183,7 +187,7 @@ pub const Tokenizer = struct {
                 if (match_op) |match| {
                     if (start < i) {
                         // Token: [start, i)
-                        const token = extractToken(cur_slice, &buf_slice, false, start, i);
+                        const token = extractToken(query[start..i], &buf_slice, false, start, i);
                         try list.append(allocator, token);
                     }
 
@@ -234,7 +238,7 @@ fn printTokens(tokens: []const Token) void {
     for (tokens) |token| {
         std.debug.print(
             "{{type: {s}, value: {s}, start_offset: {d}, end_offset: {d}}}, ",
-            .{ @tagName(token.type), token.value, token.start_offset, token.end_offset },
+            .{ @tagName(token.type), token.raw, token.start_offset, token.end_offset },
         );
     }
     std.debug.print("\n", .{});
@@ -258,7 +262,7 @@ fn expectTokens(query: []const u8, out: []const Token, exp: []const Token) !void
             printCaseError(query, exp, out);
             return err;
         };
-        testing.expectEqualStrings(expected.value, token.value) catch |err| {
+        testing.expectEqualStrings(expected.raw, token.raw) catch |err| {
             printCaseError(query, exp, out);
             return err;
         };
@@ -290,95 +294,95 @@ test "tokenize splits bare words on delimiters and operators" {
         .{
             .query = "name = sarthak",
             .expected = &.{
-                .{ .type = .string, .value = "name", .start_offset = 0, .end_offset = 4 },
-                .{ .type = .operator, .value = "=", .start_offset = 5, .end_offset = 6 },
-                .{ .type = .string, .value = "sarthak", .start_offset = 7, .end_offset = 14 },
+                .{ .type = .value, .raw = "name", .start_offset = 0, .end_offset = 4 },
+                .{ .type = .operator, .raw = "=", .start_offset = 5, .end_offset = 6 },
+                .{ .type = .value, .raw = "sarthak", .start_offset = 7, .end_offset = 14 },
             },
         },
         // Repeated, leading and trailing delimiters collapse; \r and \n count.
         .{
             .query = "  name\t=\n sarthak\r\n",
             .expected = &.{
-                .{ .type = .string, .value = "name", .start_offset = 2, .end_offset = 6 },
-                .{ .type = .operator, .value = "=", .start_offset = 7, .end_offset = 8 },
-                .{ .type = .string, .value = "sarthak", .start_offset = 10, .end_offset = 17 },
+                .{ .type = .value, .raw = "name", .start_offset = 2, .end_offset = 6 },
+                .{ .type = .operator, .raw = "=", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .value, .raw = "sarthak", .start_offset = 10, .end_offset = 17 },
             },
         },
         .{
             .query = "= != & | < <= > >= . ) (",
             .expected = &.{
-                .{ .type = .operator, .value = "=", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .value = "!=", .start_offset = 2, .end_offset = 4 },
-                .{ .type = .operator, .value = "&", .start_offset = 5, .end_offset = 6 },
-                .{ .type = .operator, .value = "|", .start_offset = 7, .end_offset = 8 },
-                .{ .type = .operator, .value = "<", .start_offset = 9, .end_offset = 10 },
-                .{ .type = .operator, .value = "<=", .start_offset = 11, .end_offset = 13 },
-                .{ .type = .operator, .value = ">", .start_offset = 14, .end_offset = 15 },
-                .{ .type = .operator, .value = ">=", .start_offset = 16, .end_offset = 18 },
-                .{ .type = .operator, .value = ".", .start_offset = 19, .end_offset = 20 },
-                .{ .type = .operator, .value = ")", .start_offset = 21, .end_offset = 22 },
-                .{ .type = .operator, .value = "(", .start_offset = 23, .end_offset = 24 },
+                .{ .type = .operator, .raw = "=", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .raw = "!=", .start_offset = 2, .end_offset = 4 },
+                .{ .type = .operator, .raw = "&", .start_offset = 5, .end_offset = 6 },
+                .{ .type = .operator, .raw = "|", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .operator, .raw = "<", .start_offset = 9, .end_offset = 10 },
+                .{ .type = .operator, .raw = "<=", .start_offset = 11, .end_offset = 13 },
+                .{ .type = .operator, .raw = ">", .start_offset = 14, .end_offset = 15 },
+                .{ .type = .operator, .raw = ">=", .start_offset = 16, .end_offset = 18 },
+                .{ .type = .operator, .raw = ".", .start_offset = 19, .end_offset = 20 },
+                .{ .type = .operator, .raw = ")", .start_offset = 21, .end_offset = 22 },
+                .{ .type = .operator, .raw = "(", .start_offset = 23, .end_offset = 24 },
             },
         },
         // Operators split a bare word without whitespace, longest match first.
         .{
             .query = "a<=>b",
             .expected = &.{
-                .{ .type = .string, .value = "a", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .value = "<=", .start_offset = 1, .end_offset = 3 },
-                .{ .type = .operator, .value = ">", .start_offset = 3, .end_offset = 4 },
-                .{ .type = .string, .value = "b", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "a", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .raw = "<=", .start_offset = 1, .end_offset = 3 },
+                .{ .type = .operator, .raw = ">", .start_offset = 3, .end_offset = 4 },
+                .{ .type = .value, .raw = "b", .start_offset = 4, .end_offset = 5 },
             },
         },
         .{
             .query = "a(b)c",
             .expected = &.{
-                .{ .type = .string, .value = "a", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .value = "(", .start_offset = 1, .end_offset = 2 },
-                .{ .type = .string, .value = "b", .start_offset = 2, .end_offset = 3 },
-                .{ .type = .operator, .value = ")", .start_offset = 3, .end_offset = 4 },
-                .{ .type = .string, .value = "c", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "a", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .raw = "(", .start_offset = 1, .end_offset = 2 },
+                .{ .type = .value, .raw = "b", .start_offset = 2, .end_offset = 3 },
+                .{ .type = .operator, .raw = ")", .start_offset = 3, .end_offset = 4 },
+                .{ .type = .value, .raw = "c", .start_offset = 4, .end_offset = 5 },
             },
         },
         .{
             .query = "age 42 and or user.name",
             .expected = &.{
-                .{ .type = .string, .value = "age", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .integer, .value = "42", .start_offset = 4, .end_offset = 6 },
-                .{ .type = .string, .value = "and", .start_offset = 7, .end_offset = 10 },
-                .{ .type = .string, .value = "or", .start_offset = 11, .end_offset = 13 },
-                .{ .type = .string, .value = "user", .start_offset = 14, .end_offset = 18 },
-                .{ .type = .operator, .value = ".", .start_offset = 18, .end_offset = 19 },
-                .{ .type = .string, .value = "name", .start_offset = 19, .end_offset = 23 },
+                .{ .type = .value, .raw = "age", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .value, .raw = "42", .start_offset = 4, .end_offset = 6 },
+                .{ .type = .value, .raw = "and", .start_offset = 7, .end_offset = 10 },
+                .{ .type = .value, .raw = "or", .start_offset = 11, .end_offset = 13 },
+                .{ .type = .value, .raw = "user", .start_offset = 14, .end_offset = 18 },
+                .{ .type = .operator, .raw = ".", .start_offset = 18, .end_offset = 19 },
+                .{ .type = .value, .raw = "name", .start_offset = 19, .end_offset = 23 },
             },
         },
         // A decimal is not a token: the parser reassembles `1 . 5` by adjacency.
         .{
             .query = "age >= 1.5",
             .expected = &.{
-                .{ .type = .string, .value = "age", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = ">=", .start_offset = 4, .end_offset = 6 },
-                .{ .type = .integer, .value = "1", .start_offset = 7, .end_offset = 8 },
-                .{ .type = .operator, .value = ".", .start_offset = 8, .end_offset = 9 },
-                .{ .type = .integer, .value = "5", .start_offset = 9, .end_offset = 10 },
+                .{ .type = .value, .raw = "age", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = ">=", .start_offset = 4, .end_offset = 6 },
+                .{ .type = .value, .raw = "1", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .operator, .raw = ".", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .value, .raw = "5", .start_offset = 9, .end_offset = 10 },
             },
         },
         // Backslash is only meaningful inside quotes.
         .{
             .query = "msg = a\\zb",
             .expected = &.{
-                .{ .type = .string, .value = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = "a\\zb", .start_offset = 6, .end_offset = 10 },
+                .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "a\\zb", .start_offset = 6, .end_offset = 10 },
             },
         },
         // Offsets are byte offsets, not codepoint counts.
         .{
             .query = "x = café",
             .expected = &.{
-                .{ .type = .string, .value = "x", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .value = "=", .start_offset = 2, .end_offset = 3 },
-                .{ .type = .string, .value = "café", .start_offset = 4, .end_offset = 9 },
+                .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .raw = "=", .start_offset = 2, .end_offset = 3 },
+                .{ .type = .value, .raw = "café", .start_offset = 4, .end_offset = 9 },
             },
         },
         .{ .query = "", .expected = &.{} },
@@ -392,23 +396,23 @@ test "tokenize recognizes unary not and preserves longest operator matches" {
         .{
             .query = "!active",
             .expected = &.{
-                .{ .type = .operator, .value = "!", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .string, .value = "active", .start_offset = 1, .end_offset = 7 },
+                .{ .type = .operator, .raw = "!", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .value, .raw = "active", .start_offset = 1, .end_offset = 7 },
             },
         },
         .{
             .query = "!!active",
             .expected = &.{
-                .{ .type = .operator, .value = "!", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .value = "!", .start_offset = 1, .end_offset = 2 },
-                .{ .type = .string, .value = "active", .start_offset = 2, .end_offset = 8 },
+                .{ .type = .operator, .raw = "!", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .raw = "!", .start_offset = 1, .end_offset = 2 },
+                .{ .type = .value, .raw = "active", .start_offset = 2, .end_offset = 8 },
             },
         },
         .{
             .query = "!=active",
             .expected = &.{
-                .{ .type = .operator, .value = "!=", .start_offset = 0, .end_offset = 2 },
-                .{ .type = .string, .value = "active", .start_offset = 2, .end_offset = 8 },
+                .{ .type = .operator, .raw = "!=", .start_offset = 0, .end_offset = 2 },
+                .{ .type = .value, .raw = "active", .start_offset = 2, .end_offset = 8 },
             },
         },
     });
@@ -419,9 +423,9 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
         .{
             .query = "city = \"New York\"",
             .expected = &.{
-                .{ .type = .string, .value = "city", .start_offset = 0, .end_offset = 4 },
-                .{ .type = .operator, .value = "=", .start_offset = 5, .end_offset = 6 },
-                .{ .type = .string, .value = "New York", .start_offset = 7, .end_offset = 17 },
+                .{ .type = .value, .raw = "city", .start_offset = 0, .end_offset = 4 },
+                .{ .type = .operator, .raw = "=", .start_offset = 5, .end_offset = 6 },
+                .{ .type = .value, .raw = "\"New York\"", .start_offset = 7, .end_offset = 17 },
             },
         },
         // Delimiters are ordinary bytes inside quotes, control characters included,
@@ -429,45 +433,45 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
         .{
             .query = "msg = \" a\nb\tc \"",
             .expected = &.{
-                .{ .type = .string, .value = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = " a\nb\tc ", .start_offset = 6, .end_offset = 15 },
+                .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "\" a\nb\tc \"", .start_offset = 6, .end_offset = 15 },
             },
         },
         .{
             .query = "x = \"\"",
             .expected = &.{
-                .{ .type = .string, .value = "x", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .value = "=", .start_offset = 2, .end_offset = 3 },
-                .{ .type = .string, .value = "", .start_offset = 4, .end_offset = 6 },
+                .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .operator, .raw = "=", .start_offset = 2, .end_offset = 3 },
+                .{ .type = .value, .raw = "\"\"", .start_offset = 4, .end_offset = 6 },
             },
         },
         // Quoting is the escape hatch for the reserved set: a quoted `.` is data,
-        // so `"a.b"` is one key and `user."1"` is a key, not the index `user.1`.
+        // so each quoted section remains one value token.
         .{
             .query = "\"a.b\" = 1",
             .expected = &.{
-                .{ .type = .string, .value = "a.b", .start_offset = 0, .end_offset = 5 },
-                .{ .type = .operator, .value = "=", .start_offset = 6, .end_offset = 7 },
-                .{ .type = .integer, .value = "1", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .value, .raw = "\"a.b\"", .start_offset = 0, .end_offset = 5 },
+                .{ .type = .operator, .raw = "=", .start_offset = 6, .end_offset = 7 },
+                .{ .type = .value, .raw = "1", .start_offset = 8, .end_offset = 9 },
             },
         },
         .{
             .query = "\"a(b)\" = 1",
             .expected = &.{
-                .{ .type = .string, .value = "a(b)", .start_offset = 0, .end_offset = 6 },
-                .{ .type = .operator, .value = "=", .start_offset = 7, .end_offset = 8 },
-                .{ .type = .integer, .value = "1", .start_offset = 9, .end_offset = 10 },
+                .{ .type = .value, .raw = "\"a(b)\"", .start_offset = 0, .end_offset = 6 },
+                .{ .type = .operator, .raw = "=", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .value, .raw = "1", .start_offset = 9, .end_offset = 10 },
             },
         },
         .{
             .query = "user.\"1\".name",
             .expected = &.{
-                .{ .type = .string, .value = "user", .start_offset = 0, .end_offset = 4 },
-                .{ .type = .operator, .value = ".", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = "1", .start_offset = 5, .end_offset = 8 },
-                .{ .type = .operator, .value = ".", .start_offset = 8, .end_offset = 9 },
-                .{ .type = .string, .value = "name", .start_offset = 9, .end_offset = 13 },
+                .{ .type = .value, .raw = "user", .start_offset = 0, .end_offset = 4 },
+                .{ .type = .operator, .raw = ".", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "\"1\"", .start_offset = 5, .end_offset = 8 },
+                .{ .type = .operator, .raw = ".", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .value, .raw = "name", .start_offset = 9, .end_offset = 13 },
             },
         },
         // `\X` -> `X` for every X: there is no escape table, so `\z` is a `z`.
@@ -475,34 +479,82 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
         .{
             .query = "msg = \"a\\\"b\"",
             .expected = &.{
-                .{ .type = .string, .value = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = "a\"b", .start_offset = 6, .end_offset = 12 },
+                .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "\"a\"b\"", .start_offset = 6, .end_offset = 12 },
             },
         },
         .{
             .query = "msg = \"a\\\\b\"",
             .expected = &.{
-                .{ .type = .string, .value = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = "a\\b", .start_offset = 6, .end_offset = 12 },
+                .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "\"a\\b\"", .start_offset = 6, .end_offset = 12 },
             },
         },
         .{
             .query = "msg = \"a\\zb\"",
             .expected = &.{
-                .{ .type = .string, .value = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = "azb", .start_offset = 6, .end_offset = 12 },
+                .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "\"azb\"", .start_offset = 6, .end_offset = 12 },
             },
         },
         // An escaped backslash is data and does not escape the closing quote.
         .{
             .query = "msg = \"\\\\\"",
             .expected = &.{
-                .{ .type = .string, .value = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .value = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .string, .value = "\\", .start_offset = 6, .end_offset = 10 },
+                .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
+                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .value, .raw = "\"\\\"", .start_offset = 6, .end_offset = 10 },
+            },
+        },
+    });
+}
+
+test "tokenize recognizes quoted fields" {
+    try expectCases(&.{
+        .{
+            .query = "@\"name\" = \"sarthak\"",
+            .expected = &.{
+                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .value, .raw = "\"name\"", .start_offset = 1, .end_offset = 7 },
+                .{ .type = .operator, .raw = "=", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .value, .raw = "\"sarthak\"", .start_offset = 10, .end_offset = 19 },
+            },
+        },
+        // The field span includes the marker and quotes; its raw text is decoded.
+        .{
+            .query = "@\"a\\\"b\"",
+            .expected = &.{
+                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .value, .raw = "\"a\"b\"", .start_offset = 1, .end_offset = 7 },
+            },
+        },
+        .{
+            .query = "@\"a.b\"",
+            .expected = &.{
+                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .value, .raw = "\"a.b\"", .start_offset = 1, .end_offset = 6 },
+            },
+        },
+        .{
+            .query = "@\"\"",
+            .expected = &.{
+                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .value, .raw = "\"\"", .start_offset = 1, .end_offset = 3 },
+            },
+        },
+        // `@` must be adjacent to the opening quote, and field state must not
+        // leak into a later quoted value.
+        .{
+            .query = "@ \"name\" @\"city\" \"value\"",
+            .expected = &.{
+                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .value, .raw = "\"name\"", .start_offset = 2, .end_offset = 8 },
+                .{ .type = .operator, .raw = "@", .start_offset = 9, .end_offset = 10 },
+                .{ .type = .value, .raw = "\"city\"", .start_offset = 10, .end_offset = 16 },
+                .{ .type = .value, .raw = "\"value\"", .start_offset = 17, .end_offset = 24 },
             },
         },
     });
@@ -518,10 +570,10 @@ test "tokenize spans a quoted token across its quotes" {
     var juxtaposed = try Tokenizer.init(allocator, "x=\"a\"b");
     defer juxtaposed.deinit();
     try expectTokens("x=\"a\"b", juxtaposed.tokens.items, &.{
-        .{ .type = .string, .value = "x", .start_offset = 0, .end_offset = 1 },
-        .{ .type = .operator, .value = "=", .start_offset = 1, .end_offset = 2 },
-        .{ .type = .string, .value = "a", .start_offset = 2, .end_offset = 5 },
-        .{ .type = .string, .value = "b", .start_offset = 5, .end_offset = 6 },
+        .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
+        .{ .type = .operator, .raw = "=", .start_offset = 1, .end_offset = 2 },
+        .{ .type = .value, .raw = "\"a\"", .start_offset = 2, .end_offset = 5 },
+        .{ .type = .value, .raw = "b", .start_offset = 5, .end_offset = 6 },
     });
 
     var joined = try Tokenizer.init(allocator, "1.5");
@@ -533,7 +585,7 @@ test "tokenize spans a quoted token across its quotes" {
     try testing.expectEqual(joined.tokens.items.len, spaced.tokens.items.len);
     for (joined.tokens.items, spaced.tokens.items) |a, b| {
         try testing.expectEqual(a.type, b.type);
-        try testing.expectEqualStrings(a.value, b.value);
+        try testing.expectEqualStrings(a.raw, b.raw);
     }
 
     for ([_][]const Token{ juxtaposed.tokens.items, joined.tokens.items }) |tokens| {
@@ -548,30 +600,27 @@ test "tokenize spans a quoted token across its quotes" {
 
 test "tokenize classifies token types" {
     const TypeCase = struct { value: []const u8, type: TokenType };
-    // Range is the parser's problem: a digit run too large for an i64 is still
-    // lexically an integer. Quoting demotes a number or an operator to a string,
-    // which is how `user.1` (index) stays distinct from `user."1"` (key).
     const cases = [_]TypeCase{
-        .{ .value = "0", .type = .integer },
-        .{ .value = "007", .type = .integer },
-        .{ .value = "-3", .type = .integer },
-        .{ .value = "300", .type = .integer },
-        .{ .value = "99999999999999999999", .type = .integer },
-        .{ .value = "+5", .type = .string },
-        .{ .value = "1_0", .type = .string },
-        .{ .value = "0x1f", .type = .string },
-        .{ .value = "1e5", .type = .string },
-        .{ .value = "12a", .type = .string },
-        .{ .value = "--3", .type = .string },
-        .{ .value = "-", .type = .string },
-        .{ .value = "\"42\"", .type = .string },
-        .{ .value = "\"=\"", .type = .string },
+        .{ .value = "0", .type = .value },
+        .{ .value = "007", .type = .value },
+        .{ .value = "-3", .type = .value },
+        .{ .value = "300", .type = .value },
+        .{ .value = "99999999999999999999", .type = .value },
+        .{ .value = "+5", .type = .value },
+        .{ .value = "1_0", .type = .value },
+        .{ .value = "0x1f", .type = .value },
+        .{ .value = "1e5", .type = .value },
+        .{ .value = "12a", .type = .value },
+        .{ .value = "--3", .type = .value },
+        .{ .value = "-", .type = .value },
+        .{ .value = "\"42\"", .type = .value },
+        .{ .value = "\"=\"", .type = .value },
         // Only delimiters, operators and the quote are reserved; the rest are
         // ordinary characters in a bare word.
-        .{ .value = "@#$", .type = .string },
-        .{ .value = ",,,", .type = .string },
-        .{ .value = "a?b", .type = .string },
-        .{ .value = "a-b", .type = .string },
+        .{ .value = "%#$", .type = .value },
+        .{ .value = ",,,", .type = .value },
+        .{ .value = "a?b", .type = .value },
+        .{ .value = "a-b", .type = .value },
     };
 
     for (cases) |tc| {
@@ -599,6 +648,8 @@ test "tokenize rejects an unterminated quote" {
         "msg = \"a\\",
         // A lone quote is an empty, unterminated string.
         "\"",
+        // A field marker does not change unterminated-quote handling.
+        "@\"name",
         // 20 tokens grow the list past its initial capacity before the failure,
         // so this also covers freeing a grown list on the error path.
         "a a a a a a a a a a a a a a a a a a a a \"x",
@@ -631,10 +682,10 @@ test "tokenize owns every token value and fills its buffer exactly" {
         const buf_start = @intFromPtr(out.buf.ptr);
         var written: usize = 0;
         for (out.tokens.items) |token| {
-            written += token.value.len;
-            const value_start = @intFromPtr(token.value.ptr);
+            written += token.raw.len;
+            const value_start = @intFromPtr(token.raw.ptr);
             try testing.expect(value_start >= buf_start);
-            try testing.expect(value_start + token.value.len <= buf_start + out.buf.len);
+            try testing.expect(value_start + token.raw.len <= buf_start + out.buf.len);
         }
         try testing.expectEqual(query.len, written);
     }
