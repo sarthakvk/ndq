@@ -16,9 +16,13 @@ On success, the parser returns an abstract syntax tree (AST). This confirms that
 
 ## Grammar
 
-```abnf
+```
+; A ~ B means A and B are adjacent in the original input.
+; That is, end_offset(A) = start_offset(B)
+; A leading ~ inside a repetition means adjacency to the previously matched element
+
 ; Precedence: () > ! > & > |
-query = or_expr
+query = or_expr | EOF
 
 or_expr = and_expr, {"|", and_expr}
 
@@ -32,12 +36,48 @@ predicate = comp | "(", or_expr, ")"
 ; this makes value <op> value and field <op> field valid too.
 comp = term, op, term
 
-term = (field | value)
-
-op = "=" | "!=" | "<" | "<=" | ">" | ">="
+term = field | value
 
 ; Allow specifying nested fields with . notation.
-field = identifier, {".", identifier}
+field = at_var, { ~ "." ~ nested_var}
 
-value = string | number | "true" | "false" | "null"
+nested_var = var | digits | true | false | null | quoted
+
+at_var = var | "@" ~ (var | digits | true | false | null | quoted)
+
+value = int | float | true | false | null | quoted
+
+float = int ~ "." ~ digits
+
+; definitions, each matches tokens full raw text
+var = ^(?!(?:true|false|null)$)[a-zA-Z_][a-zA-Z0-9_-]*$
+
+quoted = ^"[\s\S]*"$
+
+int = ^-?(0|[1-9][0-9]*)$
+digits = ^[0-9]+$
+
+true = ^true$
+false = ^false$
+null = ^null$
+
+op = "=" | "!=" | "<" | "<=" | ">" | ">="
+```
+
+#### Examples
+
+```bash
+person.name = "sarthak"
+person."first name" = "sarthak"
+
+person."first name" = person."last name"
+
+person."first name" = @"person"."last name"
+person.1."first name" = @"person"."2"."last name"
+
+person.married = false
+
+person.age = 28
+
+person.address = null
 ```
