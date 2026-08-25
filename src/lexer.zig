@@ -5,36 +5,36 @@ const testing = std.testing;
 
 const utils = @import("utils.zig");
 
-pub const Keyword = struct {
-    id: Identifier,
-    id_str: []const u8,
+pub const KeywordStr = struct {
+    id: Keyword,
+    raw: []const u8,
 };
 
-const operators_list = [_]Keyword{
-    .{ .id_str = "!", .id = Identifier.__not__ },
-    .{ .id_str = "=", .id = Identifier.__eq__ },
-    .{ .id_str = "!=", .id = Identifier.__neq__ },
-    .{ .id_str = "&", .id = Identifier.__and__ },
-    .{ .id_str = "|", .id = Identifier.__or__ },
-    .{ .id_str = "<", .id = Identifier.__lt__ },
-    .{ .id_str = ">", .id = Identifier.__gt__ },
-    .{ .id_str = "<=", .id = Identifier.__lte__ },
-    .{ .id_str = ">=", .id = Identifier.__gte__ },
-    .{ .id_str = ".", .id = Identifier.__period__ },
-    .{ .id_str = "(", .id = Identifier.__lparen__ },
-    .{ .id_str = ")", .id = Identifier.__rparen__ },
-    .{ .id_str = "@", .id = Identifier.__at_rate__ },
+const keyword_list = [_]KeywordStr{
+    .{ .raw = "!", .id = Keyword.__not__ },
+    .{ .raw = "=", .id = Keyword.__eq__ },
+    .{ .raw = "!=", .id = Keyword.__neq__ },
+    .{ .raw = "&", .id = Keyword.__and__ },
+    .{ .raw = "|", .id = Keyword.__or__ },
+    .{ .raw = "<", .id = Keyword.__lt__ },
+    .{ .raw = ">", .id = Keyword.__gt__ },
+    .{ .raw = "<=", .id = Keyword.__lte__ },
+    .{ .raw = ">=", .id = Keyword.__gte__ },
+    .{ .raw = ".", .id = Keyword.__period__ },
+    .{ .raw = "(", .id = Keyword.__lparen__ },
+    .{ .raw = ")", .id = Keyword.__rparen__ },
+    .{ .raw = "@", .id = Keyword.__at_rate__ },
 };
 
-const operators_list_kv = blk: {
-    var kvs: [operators_list.len]struct { []const u8, Identifier } = undefined;
-    for (0..operators_list.len, operators_list) |i, val| {
-        kvs[i] = .{ val.id_str, val.id };
+const keyword_list_kv = blk: {
+    var kvs: [keyword_list.len]struct { []const u8, Keyword } = undefined;
+    for (0..keyword_list.len, keyword_list) |i, val| {
+        kvs[i] = .{ val.raw, val.id };
     }
     break :blk kvs;
 };
 
-const operator_map = std.StaticStringMap(Identifier).initComptime(operators_list_kv);
+pub const KeywordMap = std.StaticStringMap(Keyword).initComptime(keyword_list_kv);
 
 const delimeters = [_]u8{
     '\n',
@@ -45,7 +45,7 @@ const delimeters = [_]u8{
 const double_quote = '\"';
 const escape = '\\';
 
-pub const Identifier = enum {
+pub const Keyword = enum {
     __not__,
     __at_rate__,
     __eq__,
@@ -64,7 +64,7 @@ pub const Identifier = enum {
 
 pub const TokenType = enum {
     value,
-    operator,
+    keyword,
 };
 
 pub const TokenizationError = error{
@@ -76,6 +76,7 @@ pub const Token = struct {
     raw: []const u8,
     start_offset: usize,
     end_offset: usize,
+    keyword: ?Keyword = null,
 };
 
 fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offset: usize, end_offset: usize) Token {
@@ -84,8 +85,8 @@ fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offse
 
     const ttype: TokenType = if (inside_quote)
         .value
-    else if (operator_map.get(s) != null)
-        .operator
+    else if (KeywordMap.get(s) != null)
+        .keyword
     else
         .value;
 
@@ -99,11 +100,14 @@ fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offse
         written += 1;
     }
 
+    const raw = buf_slice.*[0..written];
+
     const token = Token{
         .type = ttype,
-        .raw = buf_slice.*[0..written],
+        .raw = raw,
         .start_offset = start_offset,
         .end_offset = end_offset,
+        .keyword = if (ttype == TokenType.keyword) KeywordMap.get(raw) else null,
     };
 
     // move the buf slice
@@ -175,11 +179,11 @@ pub const Tokenizer = struct {
                 i += 1;
                 start = i;
             } else {
-                var match_op: ?Keyword = null;
-                for (operators_list) |op| {
-                    if (std.mem.startsWith(u8, query[i..], op.id_str)) {
+                var match_op: ?KeywordStr = null;
+                for (keyword_list) |op| {
+                    if (std.mem.startsWith(u8, query[i..], op.raw)) {
                         if (match_op) |match| {
-                            if (match.id_str.len < op.id_str.len) match_op = op;
+                            if (match.raw.len < op.raw.len) match_op = op;
                         } else match_op = op;
                     }
                 }
@@ -192,8 +196,8 @@ pub const Tokenizer = struct {
                     }
 
                     // Token: [i, match.id_str.len)
-                    const end = i + match.id_str.len;
-                    const op = extractToken(query[i .. i + match.id_str.len], &buf_slice, false, i, end);
+                    const end = i + match.raw.len;
+                    const op = extractToken(query[i .. i + match.raw.len], &buf_slice, false, i, end);
                     try list.append(allocator, op);
 
                     i = end;
@@ -295,7 +299,7 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "name = sarthak",
             .expected = &.{
                 .{ .type = .value, .raw = "name", .start_offset = 0, .end_offset = 4 },
-                .{ .type = .operator, .raw = "=", .start_offset = 5, .end_offset = 6 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 5, .end_offset = 6 },
                 .{ .type = .value, .raw = "sarthak", .start_offset = 7, .end_offset = 14 },
             },
         },
@@ -304,24 +308,24 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "  name\t=\n sarthak\r\n",
             .expected = &.{
                 .{ .type = .value, .raw = "name", .start_offset = 2, .end_offset = 6 },
-                .{ .type = .operator, .raw = "=", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 7, .end_offset = 8 },
                 .{ .type = .value, .raw = "sarthak", .start_offset = 10, .end_offset = 17 },
             },
         },
         .{
             .query = "= != & | < <= > >= . ) (",
             .expected = &.{
-                .{ .type = .operator, .raw = "=", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .raw = "!=", .start_offset = 2, .end_offset = 4 },
-                .{ .type = .operator, .raw = "&", .start_offset = 5, .end_offset = 6 },
-                .{ .type = .operator, .raw = "|", .start_offset = 7, .end_offset = 8 },
-                .{ .type = .operator, .raw = "<", .start_offset = 9, .end_offset = 10 },
-                .{ .type = .operator, .raw = "<=", .start_offset = 11, .end_offset = 13 },
-                .{ .type = .operator, .raw = ">", .start_offset = 14, .end_offset = 15 },
-                .{ .type = .operator, .raw = ">=", .start_offset = 16, .end_offset = 18 },
-                .{ .type = .operator, .raw = ".", .start_offset = 19, .end_offset = 20 },
-                .{ .type = .operator, .raw = ")", .start_offset = 21, .end_offset = 22 },
-                .{ .type = .operator, .raw = "(", .start_offset = 23, .end_offset = 24 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "!=", .start_offset = 2, .end_offset = 4 },
+                .{ .type = .keyword, .raw = "&", .start_offset = 5, .end_offset = 6 },
+                .{ .type = .keyword, .raw = "|", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .keyword, .raw = "<", .start_offset = 9, .end_offset = 10 },
+                .{ .type = .keyword, .raw = "<=", .start_offset = 11, .end_offset = 13 },
+                .{ .type = .keyword, .raw = ">", .start_offset = 14, .end_offset = 15 },
+                .{ .type = .keyword, .raw = ">=", .start_offset = 16, .end_offset = 18 },
+                .{ .type = .keyword, .raw = ".", .start_offset = 19, .end_offset = 20 },
+                .{ .type = .keyword, .raw = ")", .start_offset = 21, .end_offset = 22 },
+                .{ .type = .keyword, .raw = "(", .start_offset = 23, .end_offset = 24 },
             },
         },
         // Operators split a bare word without whitespace, longest match first.
@@ -329,8 +333,8 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "a<=>b",
             .expected = &.{
                 .{ .type = .value, .raw = "a", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .raw = "<=", .start_offset = 1, .end_offset = 3 },
-                .{ .type = .operator, .raw = ">", .start_offset = 3, .end_offset = 4 },
+                .{ .type = .keyword, .raw = "<=", .start_offset = 1, .end_offset = 3 },
+                .{ .type = .keyword, .raw = ">", .start_offset = 3, .end_offset = 4 },
                 .{ .type = .value, .raw = "b", .start_offset = 4, .end_offset = 5 },
             },
         },
@@ -338,9 +342,9 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "a(b)c",
             .expected = &.{
                 .{ .type = .value, .raw = "a", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .raw = "(", .start_offset = 1, .end_offset = 2 },
+                .{ .type = .keyword, .raw = "(", .start_offset = 1, .end_offset = 2 },
                 .{ .type = .value, .raw = "b", .start_offset = 2, .end_offset = 3 },
-                .{ .type = .operator, .raw = ")", .start_offset = 3, .end_offset = 4 },
+                .{ .type = .keyword, .raw = ")", .start_offset = 3, .end_offset = 4 },
                 .{ .type = .value, .raw = "c", .start_offset = 4, .end_offset = 5 },
             },
         },
@@ -352,7 +356,7 @@ test "tokenize splits bare words on delimiters and operators" {
                 .{ .type = .value, .raw = "and", .start_offset = 7, .end_offset = 10 },
                 .{ .type = .value, .raw = "or", .start_offset = 11, .end_offset = 13 },
                 .{ .type = .value, .raw = "user", .start_offset = 14, .end_offset = 18 },
-                .{ .type = .operator, .raw = ".", .start_offset = 18, .end_offset = 19 },
+                .{ .type = .keyword, .raw = ".", .start_offset = 18, .end_offset = 19 },
                 .{ .type = .value, .raw = "name", .start_offset = 19, .end_offset = 23 },
             },
         },
@@ -361,9 +365,9 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "age >= 1.5",
             .expected = &.{
                 .{ .type = .value, .raw = "age", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = ">=", .start_offset = 4, .end_offset = 6 },
+                .{ .type = .keyword, .raw = ">=", .start_offset = 4, .end_offset = 6 },
                 .{ .type = .value, .raw = "1", .start_offset = 7, .end_offset = 8 },
-                .{ .type = .operator, .raw = ".", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .keyword, .raw = ".", .start_offset = 8, .end_offset = 9 },
                 .{ .type = .value, .raw = "5", .start_offset = 9, .end_offset = 10 },
             },
         },
@@ -372,7 +376,7 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "msg = a\\zb",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "a\\zb", .start_offset = 6, .end_offset = 10 },
             },
         },
@@ -381,7 +385,7 @@ test "tokenize splits bare words on delimiters and operators" {
             .query = "x = café",
             .expected = &.{
                 .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .raw = "=", .start_offset = 2, .end_offset = 3 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 2, .end_offset = 3 },
                 .{ .type = .value, .raw = "café", .start_offset = 4, .end_offset = 9 },
             },
         },
@@ -396,22 +400,22 @@ test "tokenize recognizes unary not and preserves longest operator matches" {
         .{
             .query = "!active",
             .expected = &.{
-                .{ .type = .operator, .raw = "!", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "!", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .value, .raw = "active", .start_offset = 1, .end_offset = 7 },
             },
         },
         .{
             .query = "!!active",
             .expected = &.{
-                .{ .type = .operator, .raw = "!", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .raw = "!", .start_offset = 1, .end_offset = 2 },
+                .{ .type = .keyword, .raw = "!", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "!", .start_offset = 1, .end_offset = 2 },
                 .{ .type = .value, .raw = "active", .start_offset = 2, .end_offset = 8 },
             },
         },
         .{
             .query = "!=active",
             .expected = &.{
-                .{ .type = .operator, .raw = "!=", .start_offset = 0, .end_offset = 2 },
+                .{ .type = .keyword, .raw = "!=", .start_offset = 0, .end_offset = 2 },
                 .{ .type = .value, .raw = "active", .start_offset = 2, .end_offset = 8 },
             },
         },
@@ -424,7 +428,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "city = \"New York\"",
             .expected = &.{
                 .{ .type = .value, .raw = "city", .start_offset = 0, .end_offset = 4 },
-                .{ .type = .operator, .raw = "=", .start_offset = 5, .end_offset = 6 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 5, .end_offset = 6 },
                 .{ .type = .value, .raw = "\"New York\"", .start_offset = 7, .end_offset = 17 },
             },
         },
@@ -434,7 +438,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "msg = \" a\nb\tc \"",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "\" a\nb\tc \"", .start_offset = 6, .end_offset = 15 },
             },
         },
@@ -442,7 +446,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "x = \"\"",
             .expected = &.{
                 .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .operator, .raw = "=", .start_offset = 2, .end_offset = 3 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 2, .end_offset = 3 },
                 .{ .type = .value, .raw = "\"\"", .start_offset = 4, .end_offset = 6 },
             },
         },
@@ -452,7 +456,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "\"a.b\" = 1",
             .expected = &.{
                 .{ .type = .value, .raw = "\"a.b\"", .start_offset = 0, .end_offset = 5 },
-                .{ .type = .operator, .raw = "=", .start_offset = 6, .end_offset = 7 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 6, .end_offset = 7 },
                 .{ .type = .value, .raw = "1", .start_offset = 8, .end_offset = 9 },
             },
         },
@@ -460,7 +464,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "\"a(b)\" = 1",
             .expected = &.{
                 .{ .type = .value, .raw = "\"a(b)\"", .start_offset = 0, .end_offset = 6 },
-                .{ .type = .operator, .raw = "=", .start_offset = 7, .end_offset = 8 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 7, .end_offset = 8 },
                 .{ .type = .value, .raw = "1", .start_offset = 9, .end_offset = 10 },
             },
         },
@@ -468,9 +472,9 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "user.\"1\".name",
             .expected = &.{
                 .{ .type = .value, .raw = "user", .start_offset = 0, .end_offset = 4 },
-                .{ .type = .operator, .raw = ".", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = ".", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "\"1\"", .start_offset = 5, .end_offset = 8 },
-                .{ .type = .operator, .raw = ".", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .keyword, .raw = ".", .start_offset = 8, .end_offset = 9 },
                 .{ .type = .value, .raw = "name", .start_offset = 9, .end_offset = 13 },
             },
         },
@@ -480,7 +484,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "msg = \"a\\\"b\"",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "\"a\"b\"", .start_offset = 6, .end_offset = 12 },
             },
         },
@@ -488,7 +492,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "msg = \"a\\\\b\"",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "\"a\\b\"", .start_offset = 6, .end_offset = 12 },
             },
         },
@@ -496,7 +500,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "msg = \"a\\zb\"",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "\"azb\"", .start_offset = 6, .end_offset = 12 },
             },
         },
@@ -505,7 +509,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .query = "msg = \"\\\\\"",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
-                .{ .type = .operator, .raw = "=", .start_offset = 4, .end_offset = 5 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
                 .{ .type = .value, .raw = "\"\\\"", .start_offset = 6, .end_offset = 10 },
             },
         },
@@ -517,9 +521,9 @@ test "tokenize recognizes quoted fields" {
         .{
             .query = "@\"name\" = \"sarthak\"",
             .expected = &.{
-                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "@", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .value, .raw = "\"name\"", .start_offset = 1, .end_offset = 7 },
-                .{ .type = .operator, .raw = "=", .start_offset = 8, .end_offset = 9 },
+                .{ .type = .keyword, .raw = "=", .start_offset = 8, .end_offset = 9 },
                 .{ .type = .value, .raw = "\"sarthak\"", .start_offset = 10, .end_offset = 19 },
             },
         },
@@ -527,21 +531,21 @@ test "tokenize recognizes quoted fields" {
         .{
             .query = "@\"a\\\"b\"",
             .expected = &.{
-                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "@", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .value, .raw = "\"a\"b\"", .start_offset = 1, .end_offset = 7 },
             },
         },
         .{
             .query = "@\"a.b\"",
             .expected = &.{
-                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "@", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .value, .raw = "\"a.b\"", .start_offset = 1, .end_offset = 6 },
             },
         },
         .{
             .query = "@\"\"",
             .expected = &.{
-                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "@", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .value, .raw = "\"\"", .start_offset = 1, .end_offset = 3 },
             },
         },
@@ -550,9 +554,9 @@ test "tokenize recognizes quoted fields" {
         .{
             .query = "@ \"name\" @\"city\" \"value\"",
             .expected = &.{
-                .{ .type = .operator, .raw = "@", .start_offset = 0, .end_offset = 1 },
+                .{ .type = .keyword, .raw = "@", .start_offset = 0, .end_offset = 1 },
                 .{ .type = .value, .raw = "\"name\"", .start_offset = 2, .end_offset = 8 },
-                .{ .type = .operator, .raw = "@", .start_offset = 9, .end_offset = 10 },
+                .{ .type = .keyword, .raw = "@", .start_offset = 9, .end_offset = 10 },
                 .{ .type = .value, .raw = "\"city\"", .start_offset = 10, .end_offset = 16 },
                 .{ .type = .value, .raw = "\"value\"", .start_offset = 17, .end_offset = 24 },
             },
@@ -571,7 +575,7 @@ test "tokenize spans a quoted token across its quotes" {
     defer juxtaposed.deinit();
     try expectTokens("x=\"a\"b", juxtaposed.tokens.items, &.{
         .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
-        .{ .type = .operator, .raw = "=", .start_offset = 1, .end_offset = 2 },
+        .{ .type = .keyword, .raw = "=", .start_offset = 1, .end_offset = 2 },
         .{ .type = .value, .raw = "\"a\"", .start_offset = 2, .end_offset = 5 },
         .{ .type = .value, .raw = "b", .start_offset = 5, .end_offset = 6 },
     });
