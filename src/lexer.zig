@@ -236,6 +236,22 @@ const Case = struct {
     expected: []const Token,
 };
 
+const expected_keyword_map = std.StaticStringMap(Keyword).initComptime(.{
+    .{ "!", .__not__ },
+    .{ "@", .__at_rate__ },
+    .{ "=", .__eq__ },
+    .{ "!=", .__neq__ },
+    .{ "&", .__and__ },
+    .{ "|", .__or__ },
+    .{ "<", .__lt__ },
+    .{ ">", .__gt__ },
+    .{ "<=", .__lte__ },
+    .{ ">=", .__gte__ },
+    .{ ".", .__period__ },
+    .{ "(", .__lparen__ },
+    .{ ")", .__rparen__ },
+});
+
 fn printTokens(tokens: []const Token) void {
     std.debug.print("total tokens: {d}\nTokens: ", .{tokens.len});
 
@@ -275,6 +291,15 @@ fn expectTokens(query: []const u8, out: []const Token, exp: []const Token) !void
             return err;
         };
         testing.expectEqual(expected.end_offset, token.end_offset) catch |err| {
+            printCaseError(query, exp, out);
+            return err;
+        };
+
+        const expected_keyword = switch (expected.type) {
+            .value => null,
+            .keyword => expected_keyword_map.get(expected.raw) orelse return error.UnknownExpectedKeyword,
+        };
+        testing.expectEqual(expected_keyword, token.keyword) catch |err| {
             printCaseError(query, exp, out);
             return err;
         };
