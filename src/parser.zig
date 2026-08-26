@@ -157,18 +157,24 @@ fn parseOr(allocator: mem.Allocator, tokens: []const Token) SyntaxError!*ASTNode
         } else break;
     }
 
-    const node = try allocator.create(ASTNode);
-    errdefer allocator.destroy(node);
+    if (oprands.items.len > 1) {
+        const node = try allocator.create(ASTNode);
+        errdefer allocator.destroy(node);
 
-    node.* = .{
-        .exp = .{
-            .oprands = try oprands.toOwnedSlice(allocator),
-            .type = ExpressionType.OR,
-            .tokens_consumed = consumed,
-        },
-    };
+        node.* = .{
+            .exp = .{
+                .oprands = try oprands.toOwnedSlice(allocator),
+                .type = ExpressionType.OR,
+                .tokens_consumed = consumed,
+            },
+        };
+        return node;
+    } else {
+        defer oprands.deinit(allocator);
 
-    return node;
+        std.debug.assert(oprands.items.len == 1);
+        return oprands.pop() orelse unreachable;
+    }
 }
 
 fn parseAnd(allocator: mem.Allocator, tokens: []const Token) SyntaxError!*ASTNode {
@@ -195,18 +201,24 @@ fn parseAnd(allocator: mem.Allocator, tokens: []const Token) SyntaxError!*ASTNod
         } else break;
     }
 
-    const node = try allocator.create(ASTNode);
-    errdefer allocator.destroy(node);
+    if (oprands.items.len > 1) {
+        const node = try allocator.create(ASTNode);
+        errdefer allocator.destroy(node);
 
-    node.* = .{
-        .exp = .{
-            .oprands = try oprands.toOwnedSlice(allocator),
-            .type = ExpressionType.AND,
-            .tokens_consumed = consumed,
-        },
-    };
+        node.* = .{
+            .exp = .{
+                .oprands = try oprands.toOwnedSlice(allocator),
+                .type = ExpressionType.AND,
+                .tokens_consumed = consumed,
+            },
+        };
+        return node;
+    } else {
+        defer oprands.deinit(allocator);
 
-    return node;
+        std.debug.assert(oprands.items.len == 1);
+        return oprands.pop() orelse unreachable;
+    }
 }
 
 fn parseNot(allocator: mem.Allocator, tokens: []const Token) SyntaxError!*ASTNode {
