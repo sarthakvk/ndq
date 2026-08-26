@@ -64,13 +64,14 @@ const Expression = struct {
 
     const Self = @This();
 
-    fn init(allocator: mem.Allocator, etype: ExpressionType, oprands: []*ASTNode) !*ASTNode {
+    fn init(allocator: mem.Allocator, etype: ExpressionType, oprands: []*ASTNode, tokens_consumed: usize) !*ASTNode {
         const node = try allocator.create(ASTNode);
         errdefer allocator.destroy(node);
 
         node.* = .{ .exp = .{
             .oprands = oprands,
             .type = etype,
+            .tokens_consumed = tokens_consumed,
         } };
         return node;
     }
@@ -123,7 +124,8 @@ const ParsedToken = enum {
 };
 
 pub fn Parse(allocator: mem.Allocator, tokens: []const Token) SyntaxError!*ASTNode {
-    std.debug.assert(tokens.len != 0);
+    try ensureTokenSliceLen(tokens, 3);
+
     const root = try parseOr(allocator, tokens);
     errdefer root.deinit(allocator);
 
@@ -320,13 +322,18 @@ fn isAdjacent(token1: Token, token2: Token) bool {
     return token1.end_offset == token2.start_offset;
 }
 
-fn parseField(tokens: []const Token) SyntaxError!usize {
-    // This functions should never be called with empty token slice.
-    std.debug.assert(tokens.len != 0);
+fn ensureTokenSliceLen(tokens: []const Token, at_atleast: usize) SyntaxError!void {
+    if (tokens.len < at_atleast) {
+        std.log.debug("Expected at_least {d} token, found {d}", .{ at_atleast, tokens.len });
+        return SyntaxError.EOFError;
+    }
+}
 
+fn parseField(tokens: []const Token) SyntaxError!usize {
     const at_field = if (std.mem.eql(u8, tokens[0].raw, "@")) true else false;
     var consumed: usize = if (at_field) 1 else 0;
 
+    try ensureTokenSliceLen(tokens, consumed + 1);
     const leading = tokens[consumed];
     const leading_type = try parseToken(tokens[consumed]);
 
@@ -339,13 +346,14 @@ fn parseField(tokens: []const Token) SyntaxError!usize {
             },
         }
     } else {
+        std.debug.assert(consumed > 0);
         const at_token = tokens[consumed - 1];
         if (!isAdjacent(at_token, tokens[consumed])) {
             std.log.debug("Expected key after '@', found invalid value at {d}", .{at_token.end_offset});
             return SyntaxError.SyntaxError;
         }
         switch (leading_type) {
-            .identifier, .digits, .boolean, .none, .quoted => consumed += 1,
+            .identifier, .digits, .boolean, .none, .quoted, .int => consumed += 1,
             else => {
                 std.log.debug("Invalid value after '@' at {d}", .{at_token.end_offset});
                 return SyntaxError.SyntaxError;
@@ -376,7 +384,7 @@ fn parseField(tokens: []const Token) SyntaxError!usize {
         }
 
         switch (pkey) {
-            .identifier, .digits, .boolean, .none, .quoted => {},
+            .identifier, .digits, .boolean, .none, .quoted, .int => {},
             else => {
                 std.log.debug("Can't use {s} as a key, use quotes to escape", .{key.raw});
                 return SyntaxError.SyntaxError;
