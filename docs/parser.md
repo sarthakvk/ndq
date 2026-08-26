@@ -22,9 +22,9 @@ On success, the parser returns an abstract syntax tree (AST). This confirms that
 ; A leading ~ inside a repetition means adjacency to the previously matched element
 
 ; Precedence: () > ! > & > |
-query = or_expr
+query = or_expr | EOF
 
-or_expr = and_expr, {"|", and_expr} | EOF
+or_expr = and_expr, {"|", and_expr}
 
 and_expr = not_expr, {"&", not_expr}
 
