@@ -22,9 +22,9 @@ On success, the parser returns an abstract syntax tree (AST). This confirms that
 ; A leading ~ inside a repetition means adjacency to the previously matched element
 
 ; Precedence: () > ! > & > |
-query = or_expr | EOF
+query = or_expr
 
-or_expr = and_expr, {"|", and_expr}
+or_expr = and_expr, {"|", and_expr} | EOF
 
 and_expr = not_expr, {"&", not_expr}
 
@@ -41,7 +41,7 @@ term = field | value
 ; Allow specifying nested fields with . notation.
 field = at_var, { ~ "." ~ nested_var}
 
-nested_var = var | digits | true | false | null | quoted
+nested_var = var |digits | true | false | null | quoted
 
 at_var = var | "@" ~ (var | digits | true | false | null | quoted)
 
