@@ -3,6 +3,8 @@ const Io = std.Io;
 
 const ndq = @import("ndq");
 
+const cli = @import("cli.zig");
+
 const ndjson_mod = ndq.ndjson;
 
 pub fn main(init: std.process.Init) !void {
@@ -12,9 +14,16 @@ pub fn main(init: std.process.Init) !void {
     const allocator = gpa.allocator();
 
     var args_itr = init.minimal.args.iterate();
-    _ = args_itr.next();
+    const args = try cli.Cli.init(&args_itr);
 
-    _ = args_itr.next() orelse std.log.err("missing query", .{});
+    var tokenizer = try ndq.lexer.Tokenizer.init(allocator, args.query);
+    defer tokenizer.deinit();
+
+    const tokens = try tokenizer.tokens.toOwnedSlice(allocator);
+    defer allocator.free(tokens);
+
+    const ast_root = try ndq.parser.Parse(allocator, tokens);
+    defer ast_root.deinit(allocator);
 
     var jsonReader = try ndjson_mod.NdJsonReader.init(allocator, init.io, null);
     defer jsonReader.deinit();
