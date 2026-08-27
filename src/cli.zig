@@ -35,7 +35,7 @@ const Option = enum {
     outputKwarg,
     none,
 
-    fn strToFlag(s: []u8) @This() {
+    fn strToFlag(s: []const u8) @This() {
         if (mem.eql(u8, s, "-i"))
             return .inputArg
         else if (mem.startsWith(u8, s, "--input="))
@@ -78,7 +78,7 @@ pub const Cli = struct {
 
     pub fn init(args_itr: *std.process.Args.Iterator) !Self {
         // consume the executable argument
-        _ = try args_itr.next();
+        _ = args_itr.next();
         var query: ?[]const u8 = null;
         var input: ?[]const u8 = null;
         var output: ?[]const u8 = null;
@@ -90,14 +90,14 @@ pub const Cli = struct {
 
                     input = switch (op) {
                         .inputArg => args_itr.next() orelse return CliError.MissingOptionValue,
-                        .inputKwarg => Option.extractKwarg(arg),
+                        .inputKwarg => try Option.extractKwarg(arg),
                         else => unreachable,
                     };
                 },
                 .outputArg, .outputKwarg => |op| {
                     output = switch (op) {
                         .outputArg => args_itr.next() orelse return CliError.MissingOptionValue,
-                        .outputKwarg => Option.extractKwarg(arg),
+                        .outputKwarg => try Option.extractKwarg(arg),
                         else => unreachable,
                     };
                 },
