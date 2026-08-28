@@ -498,17 +498,14 @@ fn isInt(s: []const u8) bool {
 
 // Tests
 
-fn runQuery(allocator: mem.Allocator, query: []const u8) !struct { *ASTNode, []Token, []u8 } {
+fn runQuery(allocator: mem.Allocator, query: []const u8) !struct { *ASTNode, lexer.Tokenizer } {
     var tokenizer = try lexer.Tokenizer.init(allocator, query);
     errdefer tokenizer.deinit();
 
-    const tokens = try tokenizer.tokens.toOwnedSlice(allocator);
-    errdefer allocator.free(tokens);
-
-    var root = try Parse(allocator, tokens);
+    var root = try Parse(allocator, tokenizer.tokens);
     errdefer root.deinit(allocator);
 
-    return .{ root, tokens, tokenizer.buf };
+    return .{ root, tokenizer };
 }
 
 test "parse bare expression" {
@@ -518,14 +515,14 @@ test "parse bare expression" {
     var failed_query: [6][]const u8 = undefined;
     case: {
         const query = "person.name = \"sarthak\"";
-        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+        const root, var tokenizer = runQuery(allocator, query) catch {
             failed_query[fail] = query;
             fail += 1;
             break :case;
         };
-        defer allocator.free(token_buf);
-        defer allocator.free(tokens);
+        defer tokenizer.deinit();
         defer root.deinit(allocator);
+        const tokens = tokenizer.tokens;
 
         const expectation: ASTNode = .{
             .comp = .{
@@ -542,14 +539,14 @@ test "parse bare expression" {
     }
     case: {
         const query = "age >= 18";
-        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+        const root, var tokenizer = runQuery(allocator, query) catch {
             failed_query[fail] = query;
             fail += 1;
             break :case;
         };
-        defer allocator.free(token_buf);
-        defer allocator.free(tokens);
+        defer tokenizer.deinit();
         defer root.deinit(allocator);
+        const tokens = tokenizer.tokens;
 
         const expectation: ASTNode = .{
             .comp = .{
@@ -566,14 +563,14 @@ test "parse bare expression" {
     }
     case: {
         const query = "active = true & deleted = null";
-        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+        const root, var tokenizer = runQuery(allocator, query) catch {
             failed_query[fail] = query;
             fail += 1;
             break :case;
         };
-        defer allocator.free(token_buf);
-        defer allocator.free(tokens);
+        defer tokenizer.deinit();
         defer root.deinit(allocator);
+        const tokens = tokenizer.tokens;
 
         var active: ASTNode = .{
             .comp = .{
@@ -606,14 +603,14 @@ test "parse bare expression" {
     }
     case: {
         const query = "!score < -1.5";
-        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+        const root, var tokenizer = runQuery(allocator, query) catch {
             failed_query[fail] = query;
             fail += 1;
             break :case;
         };
-        defer allocator.free(token_buf);
-        defer allocator.free(tokens);
+        defer tokenizer.deinit();
         defer root.deinit(allocator);
+        const tokens = tokenizer.tokens;
 
         var comparison: ASTNode = .{
             .comp = .{
@@ -638,14 +635,14 @@ test "parse bare expression" {
     }
     case: {
         const query = "(country = \"IN\" | country = \"US\")";
-        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+        const root, var tokenizer = runQuery(allocator, query) catch {
             failed_query[fail] = query;
             fail += 1;
             break :case;
         };
-        defer allocator.free(token_buf);
-        defer allocator.free(tokens);
+        defer tokenizer.deinit();
         defer root.deinit(allocator);
+        const tokens = tokenizer.tokens;
 
         var india: ASTNode = .{
             .comp = .{
@@ -678,14 +675,14 @@ test "parse bare expression" {
     }
     case: {
         const query = "@\"odd key\" != profile.0";
-        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+        const root, var tokenizer = runQuery(allocator, query) catch {
             failed_query[fail] = query;
             fail += 1;
             break :case;
         };
-        defer allocator.free(token_buf);
-        defer allocator.free(tokens);
+        defer tokenizer.deinit();
         defer root.deinit(allocator);
+        const tokens = tokenizer.tokens;
 
         const expectation: ASTNode = .{
             .comp = .{

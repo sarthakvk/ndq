@@ -77,10 +77,7 @@ pub const Token = struct {
     keyword: ?Keyword = null,
 };
 
-fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offset: usize, end_offset: usize) Token {
-    var written: usize = 0;
-    var open_escape = false;
-
+fn extractToken(s: []const u8, inside_quote: bool, start_offset: usize, end_offset: usize) Token {
     const ttype: TokenType = if (inside_quote)
         .value
     else if (KeywordMap.get(s) != null)
@@ -88,46 +85,26 @@ fn extractToken(s: []const u8, buf_slice: *[]u8, inside_quote: bool, start_offse
     else
         .value;
 
-    for (s) |c| {
-        if (inside_quote and (c == escape or open_escape)) {
-            open_escape = !open_escape;
-            // skip the current char, as it opened escape.
-            if (open_escape) continue;
-        }
-        buf_slice.*[written] = c;
-        written += 1;
-    }
-
-    const raw = buf_slice.*[0..written];
-
     const token = Token{
         .type = ttype,
-        .raw = raw,
+        .raw = s,
         .start_offset = start_offset,
         .end_offset = end_offset,
-        .keyword = if (ttype == TokenType.keyword) KeywordMap.get(raw) else null,
+        .keyword = if (ttype == TokenType.keyword) KeywordMap.get(s) else null,
     };
-
-    // move the buf slice
-    buf_slice.* = buf_slice.*[written..];
 
     return token;
 }
 
 pub const Tokenizer = struct {
-    tokens: std.ArrayList(Token),
-    buf: []u8,
+    tokens: []Token,
+    buf: []const u8,
     allocator: mem.Allocator,
 
     /// Convert the raw query slice, into the token slice
     pub fn init(allocator: mem.Allocator, query: []const u8) !Tokenizer {
         var list = try std.ArrayList(Token).initCapacity(allocator, 16);
         errdefer list.deinit(allocator);
-
-        const buf = try allocator.alloc(u8, query.len);
-        errdefer allocator.free(buf);
-
-        var buf_slice = buf[0..];
 
         var i: usize = 0;
         var start = i;
@@ -150,7 +127,7 @@ pub const Tokenizer = struct {
                 // Once the closing quote is detected, the lexer will extract the quoted token.
                 if (c == double_quote) {
                     // token: [start, i+1)
-                    const token = extractToken(query[start .. i + 1], &buf_slice, true, start, i + 1);
+                    const token = extractToken(query[start .. i + 1], true, start, i + 1);
                     try list.append(allocator, token);
                     start = i + 1;
                     open_quote = false;
@@ -162,7 +139,7 @@ pub const Tokenizer = struct {
 
                 if (start < i) {
                     // token: [start, i)
-                    const token = extractToken(query[start..i], &buf_slice, false, start, i);
+                    const token = extractToken(query[start..i], false, start, i);
                     try list.append(allocator, token);
                 }
                 open_quote = true;
@@ -171,7 +148,7 @@ pub const Tokenizer = struct {
             } else if (std.mem.findScalar(u8, &delimeters, c) != null) {
                 if (start < i) {
                     // token: [start, i)
-                    const token = extractToken(query[start..i], &buf_slice, false, start, i);
+                    const token = extractToken(query[start..i], false, start, i);
                     try list.append(allocator, token);
                 }
                 i += 1;
@@ -189,13 +166,13 @@ pub const Tokenizer = struct {
                 if (match_op) |match| {
                     if (start < i) {
                         // Token: [start, i)
-                        const token = extractToken(query[start..i], &buf_slice, false, start, i);
+                        const token = extractToken(query[start..i], false, start, i);
                         try list.append(allocator, token);
                     }
 
-                    // Token: [i, match.id_str.len)
+                    // Token: [i, match.raw.len)
                     const end = i + match.raw.len;
-                    const op = extractToken(query[i .. i + match.raw.len], &buf_slice, false, i, end);
+                    const op = extractToken(query[i .. i + match.raw.len], false, i, end);
                     try list.append(allocator, op);
 
                     i = end;
@@ -208,20 +185,19 @@ pub const Tokenizer = struct {
 
         if (open_quote) return TokenizationError.OpenQuoteError;
         if (start < i) {
-            // Token: [start, i]
-            const token = extractToken(query[start..i], &buf_slice, false, start, i);
+            // Token: [start, i)
+            const token = extractToken(query[start..i], false, start, i);
             try list.append(allocator, token);
         }
         return .{
-            .tokens = list,
-            .buf = buf,
+            .tokens = try list.toOwnedSlice(allocator),
+            .buf = query,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *@This()) void {
-        self.tokens.deinit(self.allocator);
-        self.allocator.free(self.buf);
+        self.allocator.free(self.tokens);
     }
 };
 
@@ -312,7 +288,7 @@ fn expectCases(cases: []const Case) !void {
         };
         defer out.deinit();
 
-        try expectTokens(tc.query, out.tokens.items, tc.expected);
+        try expectTokens(tc.query, out.tokens, tc.expected);
     }
 }
 
@@ -445,7 +421,7 @@ test "tokenize recognizes unary not and preserves longest operator matches" {
     });
 }
 
-test "tokenize keeps quoted text whole and decodes its escapes" {
+test "tokenize keeps quoted text whole and preserves its escapes" {
     try expectCases(&.{
         .{
             .query = "city = \"New York\"",
@@ -501,14 +477,14 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
                 .{ .type = .value, .raw = "name", .start_offset = 9, .end_offset = 13 },
             },
         },
-        // `\X` -> `X` for every X: there is no escape table, so `\z` is a `z`.
-        // Changing that rule should fail here.
+        // A backslash escapes the next byte for quote matching, while raw keeps
+        // both bytes exactly as written in the query.
         .{
             .query = "msg = \"a\\\"b\"",
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
                 .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .value, .raw = "\"a\"b\"", .start_offset = 6, .end_offset = 12 },
+                .{ .type = .value, .raw = "\"a\\\"b\"", .start_offset = 6, .end_offset = 12 },
             },
         },
         .{
@@ -516,7 +492,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
                 .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .value, .raw = "\"a\\b\"", .start_offset = 6, .end_offset = 12 },
+                .{ .type = .value, .raw = "\"a\\\\b\"", .start_offset = 6, .end_offset = 12 },
             },
         },
         .{
@@ -524,7 +500,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
                 .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .value, .raw = "\"azb\"", .start_offset = 6, .end_offset = 12 },
+                .{ .type = .value, .raw = "\"a\\zb\"", .start_offset = 6, .end_offset = 12 },
             },
         },
         // An escaped backslash is data and does not escape the closing quote.
@@ -533,7 +509,7 @@ test "tokenize keeps quoted text whole and decodes its escapes" {
             .expected = &.{
                 .{ .type = .value, .raw = "msg", .start_offset = 0, .end_offset = 3 },
                 .{ .type = .keyword, .raw = "=", .start_offset = 4, .end_offset = 5 },
-                .{ .type = .value, .raw = "\"\\\"", .start_offset = 6, .end_offset = 10 },
+                .{ .type = .value, .raw = "\"\\\\\"", .start_offset = 6, .end_offset = 10 },
             },
         },
     });
@@ -550,12 +526,12 @@ test "tokenize recognizes quoted fields" {
                 .{ .type = .value, .raw = "\"sarthak\"", .start_offset = 10, .end_offset = 19 },
             },
         },
-        // The field span includes the marker and quotes; its raw text is decoded.
+        // The quoted field token preserves its escaped source text.
         .{
             .query = "@\"a\\\"b\"",
             .expected = &.{
                 .{ .type = .keyword, .raw = "@", .start_offset = 0, .end_offset = 1 },
-                .{ .type = .value, .raw = "\"a\"b\"", .start_offset = 1, .end_offset = 7 },
+                .{ .type = .value, .raw = "\"a\\\"b\"", .start_offset = 1, .end_offset = 7 },
             },
         },
         .{
@@ -588,15 +564,15 @@ test "tokenize recognizes quoted fields" {
 }
 
 test "tokenize spans a quoted token across its quotes" {
-    // A quoted token's span covers the quotes even though its value does not,
-    // so `end_offset` stays the token's real end in the source. Adjacency is
-    // what separates the decimal `1.5` from the path `1 . 5`, and what lets the
-    // parser reject the juxtaposition in `x="a"b`.
+    // A quoted token's span and raw text both cover the quotes, so `end_offset`
+    // stays the token's real end in the source. Adjacency is what separates the
+    // decimal `1.5` from the path `1 . 5`, and what lets the parser reject the
+    // juxtaposition in `x="a"b`.
     const allocator = testing.allocator;
 
     var juxtaposed = try Tokenizer.init(allocator, "x=\"a\"b");
     defer juxtaposed.deinit();
-    try expectTokens("x=\"a\"b", juxtaposed.tokens.items, &.{
+    try expectTokens("x=\"a\"b", juxtaposed.tokens, &.{
         .{ .type = .value, .raw = "x", .start_offset = 0, .end_offset = 1 },
         .{ .type = .keyword, .raw = "=", .start_offset = 1, .end_offset = 2 },
         .{ .type = .value, .raw = "\"a\"", .start_offset = 2, .end_offset = 5 },
@@ -609,18 +585,18 @@ test "tokenize spans a quoted token across its quotes" {
     defer spaced.deinit();
 
     // Identical tokens; only the spans tell a decimal from a spaced path.
-    try testing.expectEqual(joined.tokens.items.len, spaced.tokens.items.len);
-    for (joined.tokens.items, spaced.tokens.items) |a, b| {
+    try testing.expectEqual(joined.tokens.len, spaced.tokens.len);
+    for (joined.tokens, spaced.tokens) |a, b| {
         try testing.expectEqual(a.type, b.type);
         try testing.expectEqualStrings(a.raw, b.raw);
     }
 
-    for ([_][]const Token{ juxtaposed.tokens.items, joined.tokens.items }) |tokens| {
+    for ([_][]const Token{ juxtaposed.tokens, joined.tokens }) |tokens| {
         for (tokens[1..], tokens[0 .. tokens.len - 1]) |cur, prev| {
             try testing.expectEqual(prev.end_offset, cur.start_offset);
         }
     }
-    for (spaced.tokens.items[1..], spaced.tokens.items[0 .. spaced.tokens.items.len - 1]) |cur, prev| {
+    for (spaced.tokens[1..], spaced.tokens[0 .. spaced.tokens.len - 1]) |cur, prev| {
         try testing.expect(prev.end_offset < cur.start_offset);
     }
 }
@@ -657,10 +633,10 @@ test "tokenize classifies token types" {
         var out = try Tokenizer.init(testing.allocator, query);
         defer out.deinit();
 
-        try testing.expectEqual(@as(usize, 3), out.tokens.items.len);
-        testing.expectEqual(tc.type, out.tokens.items[2].type) catch |err| {
+        try testing.expectEqual(@as(usize, 3), out.tokens.len);
+        testing.expectEqual(tc.type, out.tokens[2].type) catch |err| {
             std.debug.print("\nquery: {s}\n", .{query});
-            printTokens(out.tokens.items);
+            printTokens(out.tokens);
             return err;
         };
     }
@@ -694,11 +670,7 @@ test "tokenize rejects an unterminated quote" {
     }
 }
 
-test "tokenize owns every token value and fills its buffer exactly" {
-    // Values are decoded copies inside Tokenizer.buf, never views into the
-    // query, so the caller's query is not part of a Tokenizer's lifetime.
-    // The buffer is sized at query.len, which is exact for a query of
-    // single-byte tokens: every byte of the query lands in some token.
+test "tokenize borrows every token value from the query" {
     const allocator = testing.allocator;
     const queries = [_][]const u8{ "........", "<=<=<=<=", "abcdefgh", "a.b.c.d." };
 
@@ -706,15 +678,13 @@ test "tokenize owns every token value and fills its buffer exactly" {
         var out = try Tokenizer.init(allocator, query);
         defer out.deinit();
 
-        const buf_start = @intFromPtr(out.buf.ptr);
-        var written: usize = 0;
-        for (out.tokens.items) |token| {
-            written += token.raw.len;
-            const value_start = @intFromPtr(token.raw.ptr);
-            try testing.expect(value_start >= buf_start);
-            try testing.expect(value_start + token.raw.len <= buf_start + out.buf.len);
+        try testing.expectEqual(query.len, out.buf.len);
+        try testing.expectEqual(@intFromPtr(query.ptr), @intFromPtr(out.buf.ptr));
+        for (out.tokens) |token| {
+            const source = query[token.start_offset..token.end_offset];
+            try testing.expectEqualStrings(source, token.raw);
+            try testing.expectEqual(@intFromPtr(source.ptr), @intFromPtr(token.raw.ptr));
         }
-        try testing.expectEqual(query.len, written);
     }
 }
 

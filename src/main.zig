@@ -19,10 +19,7 @@ pub fn main(init: std.process.Init) !void {
     var tokenizer = try ndq.lexer.Tokenizer.init(allocator, args.query);
     defer tokenizer.deinit();
 
-    const tokens = try tokenizer.tokens.toOwnedSlice(allocator);
-    defer allocator.free(tokens);
-
-    const ast_root = try ndq.parser.Parse(allocator, tokens);
+    const ast_root = try ndq.parser.Parse(allocator, tokenizer.tokens);
     defer ast_root.deinit(allocator);
 
     var jsonReader = try ndjson_mod.NdJsonReader.init(allocator, init.io, null);
