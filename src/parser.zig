@@ -1,12 +1,14 @@
 const std = @import("std");
-const mem = std.mem;
 const lexer = @import("lexer.zig");
+const test_utils = @import("test_utils.zig");
 
+const testing = std.testing;
+const mem = std.mem;
 const Token = lexer.Token;
 const Keyword = lexer.Keyword;
 const KeywordMap = lexer.KeywordMap;
 
-const SyntaxError = error{
+pub const SyntaxError = error{
     SyntaxError,
     EOFError,
     InvalidTokenError,
@@ -23,7 +25,7 @@ const CompOperator = [_]Keyword{
     Keyword.__gte__,
 };
 
-const Term = struct {
+pub const Term = struct {
     kind: enum { field, value },
     value: []const Token,
 };
@@ -51,7 +53,7 @@ const Comparision = struct {
     }
 };
 
-const ExpressionType = enum {
+pub const ExpressionType = enum {
     OR,
     AND,
     NOT,
@@ -84,7 +86,7 @@ const Expression = struct {
     }
 };
 
-const ASTNode = union(enum) {
+pub const ASTNode = union(enum) {
     exp: Expression,
     comp: Comparision,
 
@@ -494,25 +496,216 @@ fn isInt(s: []const u8) bool {
     return true;
 }
 
-//
-// Utils
-//
-
-// fn isASTEqual(root1: *ASTNode, root2: *ASTNode)
-
-//
 // Tests
-//
+
+fn runQuery(allocator: mem.Allocator, query: []const u8) !struct { *ASTNode, []Token, []u8 } {
+    var tokenizer = try lexer.Tokenizer.init(allocator, query);
+    errdefer tokenizer.deinit();
+
+    const tokens = try tokenizer.tokens.toOwnedSlice(allocator);
+    errdefer allocator.free(tokens);
+
+    var root = try Parse(allocator, tokens);
+    errdefer root.deinit(allocator);
+
+    return .{ root, tokens, tokenizer.buf };
+}
 
 test "parse bare expression" {
     const allocator = std.testing.allocator;
-    const query = "name = sarthak";
-    var tokenizer = try lexer.Tokenizer.init(allocator, query);
-    defer tokenizer.deinit();
+    const isAstEqual = test_utils.isAstEqual;
+    var fail: usize = 0;
+    var failed_query: [6][]const u8 = undefined;
+    case: {
+        const query = "person.name = \"sarthak\"";
+        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+            failed_query[fail] = query;
+            fail += 1;
+            break :case;
+        };
+        defer allocator.free(token_buf);
+        defer allocator.free(tokens);
+        defer root.deinit(allocator);
 
-    const tokens = try tokenizer.tokens.toOwnedSlice(allocator);
-    defer allocator.free(tokens);
+        const expectation: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[0..3] },
+                .op = Keyword.__eq__,
+                .term2 = .{ .kind = .value, .value = tokens[4..5] },
+                .tokens_consumed = 5,
+            },
+        };
+        testing.expect(isAstEqual(root, &expectation)) catch {
+            failed_query[fail] = query;
+            fail += 1;
+        };
+    }
+    case: {
+        const query = "age >= 18";
+        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+            failed_query[fail] = query;
+            fail += 1;
+            break :case;
+        };
+        defer allocator.free(token_buf);
+        defer allocator.free(tokens);
+        defer root.deinit(allocator);
 
-    var root = try Parse(allocator, tokens);
-    defer root.deinit(allocator);
+        const expectation: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[0..1] },
+                .op = Keyword.__gte__,
+                .term2 = .{ .kind = .value, .value = tokens[2..3] },
+                .tokens_consumed = 3,
+            },
+        };
+        testing.expect(isAstEqual(root, &expectation)) catch {
+            failed_query[fail] = query;
+            fail += 1;
+        };
+    }
+    case: {
+        const query = "active = true & deleted = null";
+        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+            failed_query[fail] = query;
+            fail += 1;
+            break :case;
+        };
+        defer allocator.free(token_buf);
+        defer allocator.free(tokens);
+        defer root.deinit(allocator);
+
+        var active: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[0..1] },
+                .op = Keyword.__eq__,
+                .term2 = .{ .kind = .value, .value = tokens[2..3] },
+                .tokens_consumed = 3,
+            },
+        };
+        var deleted: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[4..5] },
+                .op = Keyword.__eq__,
+                .term2 = .{ .kind = .value, .value = tokens[6..7] },
+                .tokens_consumed = 3,
+            },
+        };
+        var oprands = [_]*ASTNode{ &active, &deleted };
+        const expectation: ASTNode = .{
+            .exp = .{
+                .type = .AND,
+                .oprands = &oprands,
+                .tokens_consumed = 7,
+            },
+        };
+        testing.expect(isAstEqual(root, &expectation)) catch {
+            failed_query[fail] = query;
+            fail += 1;
+        };
+    }
+    case: {
+        const query = "!score < -1.5";
+        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+            failed_query[fail] = query;
+            fail += 1;
+            break :case;
+        };
+        defer allocator.free(token_buf);
+        defer allocator.free(tokens);
+        defer root.deinit(allocator);
+
+        var comparison: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[1..2] },
+                .op = Keyword.__lt__,
+                .term2 = .{ .kind = .value, .value = tokens[3..6] },
+                .tokens_consumed = 5,
+            },
+        };
+        var oprands = [_]*ASTNode{&comparison};
+        const expectation: ASTNode = .{
+            .exp = .{
+                .type = .NOT,
+                .oprands = &oprands,
+                .tokens_consumed = 6,
+            },
+        };
+        testing.expect(isAstEqual(root, &expectation)) catch {
+            failed_query[fail] = query;
+            fail += 1;
+        };
+    }
+    case: {
+        const query = "(country = \"IN\" | country = \"US\")";
+        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+            failed_query[fail] = query;
+            fail += 1;
+            break :case;
+        };
+        defer allocator.free(token_buf);
+        defer allocator.free(tokens);
+        defer root.deinit(allocator);
+
+        var india: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[1..2] },
+                .op = Keyword.__eq__,
+                .term2 = .{ .kind = .value, .value = tokens[3..4] },
+                .tokens_consumed = 3,
+            },
+        };
+        var usa: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[5..6] },
+                .op = Keyword.__eq__,
+                .term2 = .{ .kind = .value, .value = tokens[7..8] },
+                .tokens_consumed = 3,
+            },
+        };
+        var oprands = [_]*ASTNode{ &india, &usa };
+        const expectation: ASTNode = .{
+            .exp = .{
+                .type = .OR,
+                .oprands = &oprands,
+                .tokens_consumed = 9,
+            },
+        };
+        testing.expect(isAstEqual(root, &expectation)) catch {
+            failed_query[fail] = query;
+            fail += 1;
+        };
+    }
+    case: {
+        const query = "@\"odd key\" != profile.0";
+        const root, const tokens, const token_buf = runQuery(allocator, query) catch {
+            failed_query[fail] = query;
+            fail += 1;
+            break :case;
+        };
+        defer allocator.free(token_buf);
+        defer allocator.free(tokens);
+        defer root.deinit(allocator);
+
+        const expectation: ASTNode = .{
+            .comp = .{
+                .term1 = .{ .kind = .field, .value = tokens[0..2] },
+                .op = Keyword.__neq__,
+                .term2 = .{ .kind = .field, .value = tokens[3..6] },
+                .tokens_consumed = 6,
+            },
+        };
+        testing.expect(isAstEqual(root, &expectation)) catch {
+            failed_query[fail] = query;
+            fail += 1;
+        };
+    }
+
+    if (fail > 0) {
+        std.debug.print("Failed queries:\n", .{});
+        for (failed_query[0..fail]) |query| {
+            std.debug.print("  {s}\n", .{query});
+        }
+    }
+    try testing.expect(fail == 0);
 }

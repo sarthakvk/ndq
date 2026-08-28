@@ -3,8 +3,6 @@ const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;
 
-const utils = @import("utils.zig");
-
 pub const KeywordStr = struct {
     id: Keyword,
     raw: []const u8,
