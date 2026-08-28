@@ -199,3 +199,20 @@ pub const Tokenizer = struct {
         self.allocator.free(self.tokens);
     }
 };
+
+test "extract token classifies source slices" {
+    const keyword = extractToken("=", false, 4, 5);
+    try std.testing.expectEqual(TokenType.keyword, keyword.type);
+    try std.testing.expectEqualStrings("=", keyword.raw);
+    try std.testing.expectEqual(@as(usize, 4), keyword.start_offset);
+    try std.testing.expectEqual(@as(usize, 5), keyword.end_offset);
+    try std.testing.expectEqual(@as(?Keyword, Keyword.__eq__), keyword.keyword);
+
+    const value = extractToken("name", false, 7, 11);
+    try std.testing.expectEqual(TokenType.value, value.type);
+    try std.testing.expectEqual(@as(?Keyword, null), value.keyword);
+
+    const quoted_keyword = extractToken("=", true, 13, 14);
+    try std.testing.expectEqual(TokenType.value, quoted_keyword.type);
+    try std.testing.expectEqual(@as(?Keyword, null), quoted_keyword.keyword);
+}

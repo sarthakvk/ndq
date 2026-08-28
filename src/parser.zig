@@ -492,3 +492,47 @@ fn isInt(s: []const u8) bool {
     }
     return true;
 }
+
+test "identifier recognition enforces bare field grammar" {
+    for ([_][]const u8{ "a", "_", "field_1", "hyphen-name", "CamelCase" }) |value| {
+        try std.testing.expect(isIdentifier(value));
+    }
+
+    for ([_][]const u8{ "", "1field", "-field", "field.name", "field name", "café" }) |value| {
+        try std.testing.expect(!isIdentifier(value));
+    }
+}
+
+test "integer recognition enforces decimal spelling" {
+    for ([_][]const u8{ "0", "-0", "7", "-42", "99999999999999999999" }) |value| {
+        try std.testing.expect(isInt(value));
+    }
+
+    for ([_][]const u8{ "", "-", "01", "-01", "+1", "1.0", "1e2", "1_0" }) |value| {
+        try std.testing.expect(!isInt(value));
+    }
+}
+
+test "token classification distinguishes numeric keys from values" {
+    const Case = struct {
+        token: Token,
+        expected: ParsedToken,
+    };
+    const cases = [_]Case{
+        .{ .token = .{ .type = .keyword, .raw = "=", .start_offset = 0, .end_offset = 1 }, .expected = .keyword },
+        .{ .token = .{ .type = .value, .raw = "true", .start_offset = 0, .end_offset = 4 }, .expected = .boolean },
+        .{ .token = .{ .type = .value, .raw = "false", .start_offset = 0, .end_offset = 5 }, .expected = .boolean },
+        .{ .token = .{ .type = .value, .raw = "null", .start_offset = 0, .end_offset = 4 }, .expected = .none },
+        .{ .token = .{ .type = .value, .raw = "-1", .start_offset = 0, .end_offset = 2 }, .expected = .int },
+        .{ .token = .{ .type = .value, .raw = "001", .start_offset = 0, .end_offset = 3 }, .expected = .digits },
+        .{ .token = .{ .type = .value, .raw = "field", .start_offset = 0, .end_offset = 5 }, .expected = .identifier },
+        .{ .token = .{ .type = .value, .raw = "\"field\"", .start_offset = 0, .end_offset = 7 }, .expected = .quoted },
+    };
+
+    for (cases) |case| {
+        try std.testing.expectEqual(case.expected, try parseToken(case.token));
+    }
+
+    const invalid = Token{ .type = .value, .raw = "?", .start_offset = 0, .end_offset = 1 };
+    try std.testing.expectError(SyntaxError.InvalidTokenError, parseToken(invalid));
+}
