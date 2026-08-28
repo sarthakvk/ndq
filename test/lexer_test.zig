@@ -86,16 +86,32 @@ fn expectTokens(query: []const u8, out: []const Token, exp: []const Token) !void
     }
 }
 
-fn expectCases(cases: []const Case) !void {
+fn expectCases(comptime cases: []const Case) !void {
+    var fail: usize = 0;
+    var failed_query: [cases.len][]const u8 = undefined;
+
     for (cases) |tc| {
         var out = Tokenizer.init(testing.allocator, tc.query) catch |err| {
             std.debug.print("\nquery: {s} -> unexpected {any}\n", .{ tc.query, err });
-            return err;
+            failed_query[fail] = tc.query;
+            fail += 1;
+            continue;
         };
         defer out.deinit();
 
-        try expectTokens(tc.query, out.tokens, tc.expected);
+        expectTokens(tc.query, out.tokens, tc.expected) catch {
+            failed_query[fail] = tc.query;
+            fail += 1;
+        };
     }
+
+    if (fail > 0) {
+        std.debug.print("Failed queries:\n", .{});
+        for (failed_query[0..fail]) |query| {
+            std.debug.print("  {s}\n", .{query});
+        }
+    }
+    try testing.expect(fail == 0);
 }
 
 test "tokenize splits bare words on delimiters and operators" {
