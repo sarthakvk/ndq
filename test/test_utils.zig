@@ -1,6 +1,7 @@
 const std = @import("std");
-const lexer = @import("lexer.zig");
-const parser = @import("parser.zig");
+const ndq = @import("ndq");
+const lexer = ndq.lexer;
+const parser = ndq.parser;
 
 pub fn isTokenEqual(a: lexer.Token, b: lexer.Token) bool {
     return if (a.start_offset != b.start_offset)
