@@ -9,7 +9,6 @@ const newline = '\n';
 pub const NdJsonRecordReader = struct {
     // allocating writer for dynamic buffer
     writer: std.Io.Writer.Allocating,
-    allocator: std.mem.Allocator,
 
     IoLimit: std.Io.Limit = std.Io.Limit.limited(NdJsonMaxBufferSize),
 
@@ -28,7 +27,6 @@ pub const NdJsonRecordReader = struct {
 
         return .{
             .writer = writer,
-            .allocator = allocator,
         };
     }
 
@@ -216,7 +214,6 @@ test "parseLine parse json line, when the limit is reached but the valid json is
         };
 
         var ndjson_reader = NdJsonRecordReader{
-            .allocator = testing.allocator,
             .writer = std.Io.Writer.Allocating.init(testing.allocator),
             .IoLimit = std.Io.Limit.limited(limit),
         };
