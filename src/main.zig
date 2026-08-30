@@ -21,30 +21,6 @@ pub fn main(init: std.process.Init) !void {
 
     const ast_root = try ndq.parser.Parse(allocator, tokenizer.tokens);
     defer ast_root.deinit(allocator);
-
-    var jsonReader = try ndjson_mod.NdJsonReader.init(allocator, init.io, null);
-    defer jsonReader.deinit();
-
-    while (try jsonReader.next(allocator)) |json| {
-        defer json.deinit();
-
-        var it = json.value.object.iterator();
-        while (it.next()) |entry| {
-            const key = entry.key_ptr.*;
-            const val = entry.value_ptr.*;
-
-            switch (val) {
-                .integer => |cval| {
-                    std.debug.print("{s}={d}, ", .{ key, cval });
-                },
-                .string => |cval| {
-                    std.debug.print("{s}={s}, ", .{ key, cval });
-                },
-                else => continue,
-            }
-        }
-        std.debug.print("\n", .{});
-    }
 }
 
 test {

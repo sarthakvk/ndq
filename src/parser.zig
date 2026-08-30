@@ -27,7 +27,7 @@ pub const Term = struct {
     value: []const Token,
 };
 
-const Comparision = struct {
+pub const Comparision = struct {
     term1: Term,
     op: Keyword,
     term2: Term,
@@ -56,7 +56,7 @@ pub const ExpressionType = enum {
     NOT,
 };
 
-const Expression = struct {
+pub const Expression = struct {
     type: ExpressionType,
     oprands: []*ASTNode,
     tokens_consumed: usize,
