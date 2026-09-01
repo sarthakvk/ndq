@@ -60,11 +60,17 @@ pub const Keyword = enum {
 };
 
 pub const TokenType = enum {
-    value,
     keyword,
+    identifier,
+    quoted,
+    int,
+    digits,
+    boolean,
+    none,
 };
 
 pub const TokenizationError = error{
+    InvalidTokenError,
     OpenQuoteError,
 };
 
@@ -76,14 +82,74 @@ pub const Token = struct {
     keyword: ?Keyword = null,
 };
 
-fn extractToken(s: []const u8, inside_quote: bool, start_offset: usize, end_offset: usize) Token {
-    const ttype: TokenType = if (inside_quote)
-        .value
-    else if (KeywordMap.get(s) != null)
-        .keyword
-    else
-        .value;
+fn parseTokenType(token_str: []const u8) TokenizationError!TokenType {
+    const isTrue = if (std.mem.eql(u8, token_str, "true")) true else false;
+    const isFalse = if (std.mem.eql(u8, token_str, "false")) true else false;
+    const isNUll = if (std.mem.eql(u8, token_str, "null")) true else false;
+    const int = isInt(token_str);
+    const id = isIdentifier(token_str);
+    const quoted = isQuoted(token_str);
+    const digit = isDigits(token_str);
 
+    return if (KeywordMap.get(token_str) != null)
+        .keyword
+    else if (isTrue or isFalse)
+        .boolean
+    else if (isNUll)
+        .none
+    else if (int)
+        .int
+    else if (digit)
+        .digits
+    else if (id)
+        .identifier
+    else if (quoted)
+        .quoted
+    else
+        TokenizationError.InvalidTokenError;
+}
+
+fn isIdentifier(s: []const u8) bool {
+    if (s.len == 0) return false;
+
+    if (!(s[0] == '_' or std.ascii.isAlphabetic(s[0]))) return false;
+
+    for (s[1..]) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == '-'))
+            return false;
+    }
+    return true;
+}
+
+fn isQuoted(s: []const u8) bool {
+    if (s.len < 2) return false;
+    return s[0] == '"' and s[s.len - 1] == '"';
+}
+
+fn isDigits(s: []const u8) bool {
+    for (s) |c| {
+        if (!std.ascii.isDigit(c)) return false;
+    }
+    return true;
+}
+
+pub fn isInt(s: []const u8) bool {
+    if (s.len == 0) return false;
+    var start: usize = 0;
+
+    if (s[0] == '-') start += 1;
+
+    // Reject leading zero unless it's the only digit
+    if (start >= s.len or (s[start] == '0' and start < s.len - 1)) return false;
+
+    for (s[start..]) |c| {
+        if (!std.ascii.isDigit(c)) return false;
+    }
+    return true;
+}
+
+fn extractToken(s: []const u8, start_offset: usize, end_offset: usize) !Token {
+    const ttype: TokenType = try parseTokenType(s);
     const token = Token{
         .type = ttype,
         .raw = s,
@@ -126,7 +192,7 @@ pub const Tokenizer = struct {
                 // Once the closing quote is detected, the lexer will extract the quoted token.
                 if (c == double_quote) {
                     // token: [start, i+1)
-                    const token = extractToken(query[start .. i + 1], true, start, i + 1);
+                    const token = try extractToken(query[start .. i + 1], start, i + 1);
                     try list.append(allocator, token);
                     start = i + 1;
                     open_quote = false;
@@ -138,7 +204,7 @@ pub const Tokenizer = struct {
 
                 if (start < i) {
                     // token: [start, i)
-                    const token = extractToken(query[start..i], false, start, i);
+                    const token = try extractToken(query[start..i], start, i);
                     try list.append(allocator, token);
                 }
                 open_quote = true;
@@ -147,7 +213,7 @@ pub const Tokenizer = struct {
             } else if (std.mem.findScalar(u8, &delimeters, c) != null) {
                 if (start < i) {
                     // token: [start, i)
-                    const token = extractToken(query[start..i], false, start, i);
+                    const token = try extractToken(query[start..i], start, i);
                     try list.append(allocator, token);
                 }
                 i += 1;
@@ -165,13 +231,13 @@ pub const Tokenizer = struct {
                 if (match_op) |match| {
                     if (start < i) {
                         // Token: [start, i)
-                        const token = extractToken(query[start..i], false, start, i);
+                        const token = try extractToken(query[start..i], start, i);
                         try list.append(allocator, token);
                     }
 
                     // Token: [i, match.raw.len)
                     const end = i + match.raw.len;
-                    const op = extractToken(query[i .. i + match.raw.len], false, i, end);
+                    const op = try extractToken(query[i .. i + match.raw.len], i, end);
                     try list.append(allocator, op);
 
                     i = end;
@@ -185,7 +251,7 @@ pub const Tokenizer = struct {
         if (open_quote) return TokenizationError.OpenQuoteError;
         if (start < i) {
             // Token: [start, i)
-            const token = extractToken(query[start..i], false, start, i);
+            const token = try extractToken(query[start..i], start, i);
             try list.append(allocator, token);
         }
         return .{
@@ -201,18 +267,42 @@ pub const Tokenizer = struct {
 };
 
 test "extract token classifies source slices" {
-    const keyword = extractToken("=", false, 4, 5);
+    const keyword = try extractToken("=", 4, 5);
     try std.testing.expectEqual(TokenType.keyword, keyword.type);
     try std.testing.expectEqualStrings("=", keyword.raw);
     try std.testing.expectEqual(@as(usize, 4), keyword.start_offset);
     try std.testing.expectEqual(@as(usize, 5), keyword.end_offset);
     try std.testing.expectEqual(@as(?Keyword, Keyword.__eq__), keyword.keyword);
 
-    const value = extractToken("name", false, 7, 11);
-    try std.testing.expectEqual(TokenType.value, value.type);
+    const value = try extractToken("name", 7, 11);
+    try std.testing.expectEqual(TokenType.identifier, value.type);
+    try std.testing.expectEqual(@as(usize, 7), value.start_offset);
+    try std.testing.expectEqual(@as(usize, 11), value.end_offset);
     try std.testing.expectEqual(@as(?Keyword, null), value.keyword);
 
-    const quoted_keyword = extractToken("=", true, 13, 14);
-    try std.testing.expectEqual(TokenType.value, quoted_keyword.type);
+    const quoted_keyword = try extractToken("\"=\"", 13, 16);
+    try std.testing.expectEqual(TokenType.quoted, quoted_keyword.type);
+    try std.testing.expectEqual(@as(usize, 13), quoted_keyword.start_offset);
+    try std.testing.expectEqual(@as(usize, 16), quoted_keyword.end_offset);
     try std.testing.expectEqual(@as(?Keyword, null), quoted_keyword.keyword);
+}
+
+test "identifier recognition enforces bare field grammar" {
+    for ([_][]const u8{ "a", "_", "field_1", "hyphen-name", "CamelCase" }) |value| {
+        try std.testing.expect(isIdentifier(value));
+    }
+
+    for ([_][]const u8{ "", "1field", "-field", "field.name", "field name", "café" }) |value| {
+        try std.testing.expect(!isIdentifier(value));
+    }
+}
+
+test "integer recognition enforces decimal spelling" {
+    for ([_][]const u8{ "0", "-0", "7", "-42", "99999999999999999999" }) |value| {
+        try std.testing.expect(isInt(value));
+    }
+
+    for ([_][]const u8{ "", "-", "01", "-01", "+1", "1.0", "1e2", "1_0" }) |value| {
+        try std.testing.expect(!isInt(value));
+    }
 }

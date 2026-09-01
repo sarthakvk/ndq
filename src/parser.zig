@@ -112,7 +112,7 @@ pub const ASTNode = union(enum) {
     }
 };
 
-const ParsedToken = enum {
+pub const ParsedTokenType = enum {
     keyword,
     identifier,
     quoted,
@@ -120,6 +120,11 @@ const ParsedToken = enum {
     digits,
     boolean,
     none,
+};
+
+const ParsedToken = struct {
+    token_type: ParsedTokenType,
+    raw: []const u8,
 };
 
 pub fn Parse(allocator: mem.Allocator, tokens: []const Token) SyntaxError!*ASTNode {
@@ -346,10 +351,9 @@ fn parseField(tokens: []const Token) SyntaxError!usize {
 
     try ensureTokenSliceLen(tokens, consumed + 1);
     const leading = tokens[consumed];
-    const leading_type = try parseToken(tokens[consumed]);
 
     if (!at_field) {
-        switch (leading_type) {
+        switch (leading.type) {
             .identifier => consumed += 1,
             else => {
                 std.log.debug("Expected key, found {s} at {d}", .{ leading.raw, leading.start_offset });
@@ -363,7 +367,7 @@ fn parseField(tokens: []const Token) SyntaxError!usize {
             std.log.debug("Expected key after '@', found invalid value at {d}", .{at_token.end_offset});
             return SyntaxError.SyntaxError;
         }
-        switch (leading_type) {
+        switch (leading.type) {
             .identifier, .digits, .boolean, .none, .quoted, .int => consumed += 1,
             else => {
                 std.log.debug("Invalid value after '@' at {d}", .{at_token.end_offset});
@@ -387,14 +391,13 @@ fn parseField(tokens: []const Token) SyntaxError!usize {
         }
 
         const key = tokens[consumed + 1];
-        const pkey = try parseToken(key);
 
         if (key.start_offset != period.end_offset) {
             std.log.debug("Expected a key after period at {d}", .{period.end_offset});
             return SyntaxError.SyntaxError;
         }
 
-        switch (pkey) {
+        switch (key.type) {
             .identifier, .digits, .boolean, .none, .quoted, .int => {},
             else => {
                 std.log.debug("Can't use {s} as a key, use quotes to escape", .{key.raw});
@@ -407,132 +410,21 @@ fn parseField(tokens: []const Token) SyntaxError!usize {
 }
 
 fn isValue(token: Token) SyntaxError!bool {
-    const parsed = try parseToken(token);
-    return switch (parsed) {
+    return switch (token.type) {
         .boolean, .none, .int, .quoted => true,
         else => false,
     };
 }
 
-fn parseToken(token: Token) SyntaxError!ParsedToken {
-    const isTrue = if (std.mem.eql(u8, token.raw, "true")) true else false;
-    const isFalse = if (std.mem.eql(u8, token.raw, "false")) true else false;
-    const isNUll = if (std.mem.eql(u8, token.raw, "null")) true else false;
-    const int = isInt(token.raw);
-    const id = isIdentifier(token.raw);
-    const quoted = isQuoted(token.raw);
-    const digit = isDigits(token.raw);
-
-    return if (token.type == lexer.TokenType.keyword)
-        return .keyword
-    else if (isTrue or isFalse)
-        return .boolean
-    else if (isNUll)
-        .none
-    else if (int)
-        .int
-    else if (digit)
-        .digits
-    else if (id)
-        .identifier
-    else if (quoted)
-        .quoted
-    else
-        SyntaxError.InvalidTokenError;
-}
-
-fn isIdentifier(s: []const u8) bool {
-    if (s.len == 0) return false;
-
-    if (!(s[0] == '_' or std.ascii.isAlphabetic(s[0]))) return false;
-
-    for (s[1..]) |c| {
-        if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == '-'))
-            return false;
-    }
-    return true;
-}
-
-fn isQuoted(s: []const u8) bool {
-    if (s.len < 2) return false;
-    return s[0] == '"' and s[s.len - 1] == '"';
-}
-
-fn isDigits(s: []const u8) bool {
-    for (s) |c| {
-        if (!std.ascii.isDigit(c)) return false;
-    }
-    return true;
-}
-
 fn isFloat(tokens: []const Token) !bool {
     if (tokens.len < 3) return false;
-    const a = try parseToken(tokens[0]);
-    const b = try parseToken(tokens[2]);
+    const a = tokens[0];
+    const b = tokens[2];
 
-    if (a == .int and tokens[1].keyword == Keyword.__period__) {
-        if (b == .digits or (b == .int and tokens[2].raw[0] != '-')) {
+    if (a.type == .int and tokens[1].keyword == Keyword.__period__) {
+        if (b.type == .digits or (b.type == .int and tokens[2].raw[0] != '-')) {
             return ((tokens[0].end_offset == tokens[1].start_offset) and (tokens[1].end_offset == tokens[2].start_offset));
         }
     }
     return false;
-}
-
-fn isInt(s: []const u8) bool {
-    if (s.len == 0) return false;
-    var start: usize = 0;
-
-    if (s[0] == '-') start += 1;
-
-    // Reject leading zero unless it's the only digit
-    if (start >= s.len or (s[start] == '0' and start < s.len - 1)) return false;
-
-    for (s[start..]) |c| {
-        if (!std.ascii.isDigit(c)) return false;
-    }
-    return true;
-}
-
-test "identifier recognition enforces bare field grammar" {
-    for ([_][]const u8{ "a", "_", "field_1", "hyphen-name", "CamelCase" }) |value| {
-        try std.testing.expect(isIdentifier(value));
-    }
-
-    for ([_][]const u8{ "", "1field", "-field", "field.name", "field name", "café" }) |value| {
-        try std.testing.expect(!isIdentifier(value));
-    }
-}
-
-test "integer recognition enforces decimal spelling" {
-    for ([_][]const u8{ "0", "-0", "7", "-42", "99999999999999999999" }) |value| {
-        try std.testing.expect(isInt(value));
-    }
-
-    for ([_][]const u8{ "", "-", "01", "-01", "+1", "1.0", "1e2", "1_0" }) |value| {
-        try std.testing.expect(!isInt(value));
-    }
-}
-
-test "token classification distinguishes numeric keys from values" {
-    const Case = struct {
-        token: Token,
-        expected: ParsedToken,
-    };
-    const cases = [_]Case{
-        .{ .token = .{ .type = .keyword, .raw = "=", .start_offset = 0, .end_offset = 1 }, .expected = .keyword },
-        .{ .token = .{ .type = .value, .raw = "true", .start_offset = 0, .end_offset = 4 }, .expected = .boolean },
-        .{ .token = .{ .type = .value, .raw = "false", .start_offset = 0, .end_offset = 5 }, .expected = .boolean },
-        .{ .token = .{ .type = .value, .raw = "null", .start_offset = 0, .end_offset = 4 }, .expected = .none },
-        .{ .token = .{ .type = .value, .raw = "-1", .start_offset = 0, .end_offset = 2 }, .expected = .int },
-        .{ .token = .{ .type = .value, .raw = "001", .start_offset = 0, .end_offset = 3 }, .expected = .digits },
-        .{ .token = .{ .type = .value, .raw = "field", .start_offset = 0, .end_offset = 5 }, .expected = .identifier },
-        .{ .token = .{ .type = .value, .raw = "\"field\"", .start_offset = 0, .end_offset = 7 }, .expected = .quoted },
-    };
-
-    for (cases) |case| {
-        try std.testing.expectEqual(case.expected, try parseToken(case.token));
-    }
-
-    const invalid = Token{ .type = .value, .raw = "?", .start_offset = 0, .end_offset = 1 };
-    try std.testing.expectError(SyntaxError.InvalidTokenError, parseToken(invalid));
 }

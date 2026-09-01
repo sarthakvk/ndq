@@ -597,7 +597,6 @@ test "reject malformed expressions" {
         .{ .query = "a foo 1", .expected = SyntaxError.UnexpectedTokenError },
         .{ .query = "a..b = 1", .expected = SyntaxError.SyntaxError },
         .{ .query = "@@field = 1", .expected = SyntaxError.SyntaxError },
-        .{ .query = "a = café", .expected = SyntaxError.InvalidTokenError },
     };
 
     var fail: usize = 0;

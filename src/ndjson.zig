@@ -1,10 +1,18 @@
 const std = @import("std");
+const parser = @import("parser.zig");
+const lexer = @import("lexer.zig");
+const utils = @import("utils.zig");
+
 const json = std.json;
 const testing = std.testing;
 
 const NdJsonMaxBufferSize: usize = (1 << 26); // 64 MB
 const NdJsonInitialBufferSize: usize = (1 << 16); // 64 KB
 const newline = '\n';
+
+pub const NdJsonError = error{
+    InvalidIndexError,
+};
 
 pub const NdJsonRecordReader = struct {
     // allocating writer for dynamic buffer
@@ -97,7 +105,7 @@ pub const NdJsonRecordReader = struct {
 
 /// Get a nested key value
 /// if the keys is empty or any of the key does't exists return null
-pub fn getValue(value: json.Value, keys: []const []const u8) ?json.Value {
+pub fn getValue(value: json.Value, keys: []const []const u8) !?json.Value {
     var value_ = value;
 
     for (keys) |key| {
@@ -105,13 +113,18 @@ pub fn getValue(value: json.Value, keys: []const []const u8) ?json.Value {
             .object => |val| {
                 value_ = val.get(key) orelse return null;
             },
+            .array => |val| {
+                if (!lexer.isInt(key)) return NdJsonError.InvalidIndexError;
+                const idx = try utils.parseIndex(key, val.items.len);
+                value_ = val.items[idx];
+            },
             else => return null,
         }
     }
     return value_;
 }
 
-fn jsonValueEql(expected: json.Value, actual: json.Value) bool {
+pub fn jsonValueEql(expected: json.Value, actual: json.Value) bool {
     switch (expected) {
         .null => return actual == .null,
         .bool => |expected_value| switch (actual) {
