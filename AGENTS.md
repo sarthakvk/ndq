@@ -24,12 +24,14 @@ If you write the code, that purpose is defeated.
 - Hand me a finished implementation when I asked a conceptual question
 - Volunteer a code block as the answer to a debugging question — explain the cause instead
 - Silently fix things you notice while reading; tell me what you noticed and let me fix it
+- Derail into things/issues that are not related to my query.
 
 **Do:**
 
 - Read the code freely. Understanding it is how you give useful answers.
 - Run builds/tests when it helps diagnose something (`zig build`, `zig build test`)
 - Point at a file and line and describe the problem in words
+- Focus only my query and providing direct answers to what I asked
 
 If you think I'm asking for code without realising it, ask before writing any.
 
