@@ -14,6 +14,47 @@ pub const NdJsonError = error{
     InvalidIndexError,
 };
 
+pub const Input = struct {
+    reader: std.Io.File.Reader,
+    file: ?std.Io.File,
+    io: std.Io,
+    buf: []u8,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, input: ?[]const u8) !Self {
+        const buf = try allocator.alloc(u8, NdJsonInitialBufferSize);
+        errdefer allocator.free(buf);
+
+        if (input) |path| {
+            const file = try std.Io.Dir.cwd().openFile(
+                io,
+                path,
+                .{ .mode = .read_only },
+            );
+            errdefer file.close(io);
+
+            return .{
+                .reader = file.reader(io, buf),
+                .file = file,
+                .io = io,
+                .buf = buf,
+            };
+        }
+        return .{
+            .reader = std.Io.File.stdin().readerStreaming(io, buf),
+            .file = null,
+            .io = io,
+            .buf = buf,
+        };
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        if (self.file) |file| file.close(self.io);
+        allocator.free(self.buf);
+    }
+};
+
 pub const NdJsonRecordReader = struct {
     // allocating writer for dynamic buffer
     writer: std.Io.Writer.Allocating,

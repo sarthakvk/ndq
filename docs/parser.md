@@ -41,9 +41,9 @@ term = field | value
 ; Allow specifying nested fields with . notation.
 field = at_var, { ~ "." ~ nested_var}
 
-nested_var = var |digits | true | false | null | quoted
+nested_var = var |int | true | false | null | quoted
 
-at_var = var | "@" ~ (var | digits | true | false | null | quoted)
+at_var = var | "@" ~ (var | int | true | false | null | quoted)
 
 value = int | float | true | false | null | quoted
 
