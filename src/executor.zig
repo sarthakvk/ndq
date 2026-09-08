@@ -344,7 +344,7 @@ fn lte(term1: json.Value, term2: json.Value) bool {
         },
         .array => |v1| switch (term2) {
             .array => |v2| {
-                if (v1.items.len != v2.items.len or v1.items.len == 0) return false;
+                if (v1.items.len != v2.items.len) return false;
                 for (v1.items, v2.items) |e1, e2| {
                     if (!lte(e1, e2)) return false;
                 }
@@ -354,7 +354,7 @@ fn lte(term1: json.Value, term2: json.Value) bool {
         },
         .object => |v1| switch (term2) {
             .object => |v2| {
-                if (v1.count() != v2.count() or v1.count() == 0) return false;
+                if (v1.count() != v2.count()) return false;
 
                 for (v1.keys()) |key| {
                     const e1 = v1.get(key) orelse unreachable;
