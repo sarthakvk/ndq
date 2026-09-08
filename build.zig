@@ -137,6 +137,54 @@ pub fn build(b: *std.Build) void {
     });
     const run_integration_tests = b.addRunArtifact(integration_tests);
 
+    // Regression exe is always run in ReleaseFast mode.
+    const regression_exe = b.addExecutable(.{
+        .name = "ndq-regression",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "ndq", .module = mod },
+            },
+        }),
+    });
+
+    const regression_test_options = b.addOptions();
+    regression_test_options.addOptionPath("ndq_executable", regression_exe.getEmittedBin());
+
+    const regression_tests = b.addTest(.{
+        .name = "regression",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/regression_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "regression_test_options", .module = regression_test_options.createModule() },
+            },
+        }),
+    });
+    const run_regression_tests = b.addRunArtifact(regression_tests);
+    run_regression_tests.setCwd(b.path("."));
+
+    const regression_runner = b.addExecutable(.{
+        .name = "regression-runner",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/regression_runner.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const update_regression_cmd = b.addRunArtifact(regression_runner);
+    update_regression_cmd.addArtifactArg(regression_exe);
+    update_regression_cmd.addArg("--update");
+    update_regression_cmd.setCwd(b.path("."));
+    update_regression_cmd.has_side_effects = true;
+
+    const update_regression_step = b.step("update-regression", "Overwrite regression test expectations");
+    update_regression_step.dependOn(&update_regression_cmd.step);
+
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
     // hence why we have to create two separate ones.
@@ -154,6 +202,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_integration_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(&run_regression_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
