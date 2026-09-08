@@ -51,6 +51,8 @@ Each matching input line is emitted unchanged.
 
 A query compares fields and JSON values:
 
+> values are always inside double quotes, and unquoted identifier will be treated as a fields
+
 ```text
 status = "active"
 age >= 18
@@ -85,4 +87,4 @@ active = true & (role = "admin" | role = "owner")
 
 Bug reports and human-written bug fixes are welcome. Please include a small NDJSON sample, the query, and the expected and actual output when reporting a bug.
 
-This learning project does **not** accept AI-generated code contributions. The implementation is human-written; AI was used only to expand test coverage. Read [AGENTS.md](AGENTS.md) before contributing.
+This learning project does **not** accept AI-generated code contributions. The implementation is human-written; AI was used only to expand test coverage.
