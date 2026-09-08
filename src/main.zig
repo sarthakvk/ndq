@@ -20,26 +20,31 @@ pub fn main(init: std.process.Init) !void {
     var input = try ndq.ndjson.Input.init(allocator, init.io, args.input);
     defer input.deinit(allocator);
 
+    var output = try ndq.ndjson.Output.init(allocator, init.io, args.output);
+    defer output.deinit(allocator);
+
+    const iout = &output.writer.interface;
+
     var record_reader = try ndq.ndjson.NdJsonRecordReader.init(allocator);
     defer record_reader.deinit();
 
     var evaluator = try ndq.executor.TermEvaluator.init(allocator, tokenizer.buf);
     defer evaluator.deinit();
+    while (try record_reader.readLine(&input.reader.interface)) |line| {
+        if (line.len == 0) continue;
 
-    var i: usize = 0;
-    while (try record_reader.parseLine(allocator, &input.reader.interface)) |parsed| {
+        defer allocator.free(line);
+        const parsed = try record_reader.parseJsonLine(allocator, line) orelse continue;
         defer parsed.deinit();
 
         const eval = try evaluator.evaluateAST(ast_root, parsed.value);
 
         if (eval) {
-            std.debug.print("{d}: {f}\n", .{
-                i,
-                std.json.fmt(parsed.value, .{}),
-            });
+            try iout.writeAll(line);
+            try iout.writeByte('\n');
         }
-        i += 1;
     }
+    try iout.flush();
 }
 
 test {

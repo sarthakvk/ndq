@@ -14,6 +14,47 @@ pub const NdJsonError = error{
     InvalidIndexError,
 };
 
+pub const Output = struct {
+    writer: std.Io.File.Writer,
+    file: ?std.Io.File,
+    io: std.Io,
+    buf: []u8,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, output: ?[]const u8) !Self {
+        const buf = try allocator.alloc(u8, NdJsonInitialBufferSize);
+        errdefer allocator.free(buf);
+
+        if (output) |path| {
+            const file = try std.Io.Dir.cwd().openFile(
+                io,
+                path,
+                .{ .mode = .write_only },
+            );
+            errdefer file.close(io);
+
+            return .{
+                .file = file,
+                .writer = file.writer(io, buf),
+                .io = io,
+                .buf = buf,
+            };
+        }
+        return .{
+            .file = null,
+            .writer = std.Io.File.stdout().writerStreaming(io, buf),
+            .io = io,
+            .buf = buf,
+        };
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        if (self.file) |f| f.close(self.io);
+        allocator.free(self.buf);
+    }
+};
+
 pub const Input = struct {
     reader: std.Io.File.Reader,
     file: ?std.Io.File,
@@ -79,7 +120,7 @@ pub const NdJsonRecordReader = struct {
         };
     }
 
-    pub fn parseLine(self: *Self, allocator: std.mem.Allocator, reader: *std.Io.Reader) !?json.Parsed(json.Value) {
+    pub fn readLine(self: *Self, reader: *std.Io.Reader) !?[]const u8 {
         // clear writer buffre for reuse;
         // This may free the previous json values
         self.writer.clearRetainingCapacity();
@@ -116,11 +157,23 @@ pub const NdJsonRecordReader = struct {
             std.debug.assert(reader.buffered()[0] == newline);
             reader.toss(1);
         } else if (streamed == 0) {
-            return null;
+            _ = reader.peek(1) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return null,
+                    else => return err,
+                }
+            };
+            return "";
         }
 
-        const line = self.writer.written();
+        return self.writer.written();
+    }
 
+    pub fn parseJsonLine(
+        self: *Self,
+        allocator: std.mem.Allocator,
+        line: []const u8,
+    ) !?json.Parsed(json.Value) {
         const parsedJson = try json.parseFromSlice(json.Value, allocator, line, self.parseOptions);
 
         return parsedJson;
@@ -252,7 +305,7 @@ test "getValue returns values for valid keys and null for an incorrect key" {
     }
 }
 
-test "parseLine parse json line, when the limit is reached but the valid json is read" {
+test "readLine and parseJsonLine parse valid JSON when the limit is reached" {
     const cases = [_][]const u8{
         "{\"person\": {\"name\": \"sarthak\", \"age\": 999, \"profession\": null}}",
         "{\"person\": {\"name\": \"sarthak\", \"age\": 999, \"profession\": null}}\n",
@@ -275,7 +328,8 @@ test "parseLine parse json line, when the limit is reached but the valid json is
 
         var reader = testing.Reader.init(buf, &call);
 
-        const parsed = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+        const line = (try ndjson_reader.readLine(&reader.interface)).?;
+        const parsed = (try ndjson_reader.parseJsonLine(testing.allocator, line)).?;
         defer parsed.deinit();
 
         const expected = try json.parseFromSlice(json.Value, testing.allocator, str, .{});
@@ -285,7 +339,7 @@ test "parseLine parse json line, when the limit is reached but the valid json is
     }
 }
 
-test "parseLine reads consecutive records and returns null at EOF" {
+test "readLine reads consecutive records and returns null at EOF" {
     const input = "{\"first\":1}\n{\"second\":2}";
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = input }};
@@ -294,18 +348,20 @@ test "parseLine reads consecutive records and returns null at EOF" {
     defer ndjson_reader.deinit();
     var reader = testing.Reader.init(&buf, &calls);
 
-    const first = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+    const first_line = (try ndjson_reader.readLine(&reader.interface)).?;
+    const first = (try ndjson_reader.parseJsonLine(testing.allocator, first_line)).?;
     defer first.deinit();
     try testing.expectEqual(@as(i64, 1), first.value.object.get("first").?.integer);
 
-    const second = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+    const second_line = (try ndjson_reader.readLine(&reader.interface)).?;
+    const second = (try ndjson_reader.parseJsonLine(testing.allocator, second_line)).?;
     defer second.deinit();
     try testing.expectEqual(@as(i64, 2), second.value.object.get("second").?.integer);
 
-    try testing.expect((try ndjson_reader.parseLine(testing.allocator, &reader.interface)) == null);
+    try testing.expect((try ndjson_reader.readLine(&reader.interface)) == null);
 }
 
-test "parseLine returns null for empty input" {
+test "readLine returns null for empty input" {
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = "" }};
 
@@ -313,10 +369,10 @@ test "parseLine returns null for empty input" {
     defer ndjson_reader.deinit();
     var reader = testing.Reader.init(&buf, &calls);
 
-    try testing.expect((try ndjson_reader.parseLine(testing.allocator, &reader.interface)) == null);
+    try testing.expect((try ndjson_reader.readLine(&reader.interface)) == null);
 }
 
-test "parseLine consumes a malformed record before reading the next record" {
+test "readLine consumes a malformed record before reading the next record" {
     const input = "not-json\n{\"ok\":true}\n";
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = input }};
@@ -325,14 +381,16 @@ test "parseLine consumes a malformed record before reading the next record" {
     defer ndjson_reader.deinit();
     var reader = testing.Reader.init(&buf, &calls);
 
-    try testing.expectError(error.SyntaxError, ndjson_reader.parseLine(testing.allocator, &reader.interface));
+    const malformed_line = (try ndjson_reader.readLine(&reader.interface)).?;
+    try testing.expectError(error.SyntaxError, ndjson_reader.parseJsonLine(testing.allocator, malformed_line));
 
-    const parsed = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+    const valid_line = (try ndjson_reader.readLine(&reader.interface)).?;
+    const parsed = (try ndjson_reader.parseJsonLine(testing.allocator, valid_line)).?;
     defer parsed.deinit();
     try testing.expectEqual(true, parsed.value.object.get("ok").?.bool);
 }
 
-test "parseLine discards an oversized record before reading the next record" {
+test "readLine discards an oversized record before reading the next record" {
     const input = "{\"long\":1}\n{\"a\":0}\n";
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = input }};
@@ -342,14 +400,15 @@ test "parseLine discards an oversized record before reading the next record" {
     ndjson_reader.IoLimit = .limited(7);
     var reader = testing.Reader.init(&buf, &calls);
 
-    try testing.expectError(error.StreamTooLong, ndjson_reader.parseLine(testing.allocator, &reader.interface));
+    try testing.expectError(error.StreamTooLong, ndjson_reader.readLine(&reader.interface));
 
-    const parsed = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+    const line = (try ndjson_reader.readLine(&reader.interface)).?;
+    const parsed = (try ndjson_reader.parseJsonLine(testing.allocator, line)).?;
     defer parsed.deinit();
     try testing.expectEqual(@as(i64, 0), parsed.value.object.get("a").?.integer);
 }
 
-test "parseLine returns StreamTooLong for an oversized final record" {
+test "readLine returns StreamTooLong for an oversized final record" {
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = "{\"long\":1}" }};
 
@@ -358,10 +417,10 @@ test "parseLine returns StreamTooLong for an oversized final record" {
     ndjson_reader.IoLimit = .limited(7);
     var reader = testing.Reader.init(&buf, &calls);
 
-    try testing.expectError(error.StreamTooLong, ndjson_reader.parseLine(testing.allocator, &reader.interface));
+    try testing.expectError(error.StreamTooLong, ndjson_reader.readLine(&reader.interface));
 }
 
-test "parseLine clears its buffer before reading the next record" {
+test "readLine clears its buffer before reading the next record" {
     const input = "{\"long\":123456789}\n{\"id\":1}\n";
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = input }};
@@ -370,17 +429,19 @@ test "parseLine clears its buffer before reading the next record" {
     defer ndjson_reader.deinit();
     var reader = testing.Reader.init(&buf, &calls);
 
-    const first = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+    const first_line = (try ndjson_reader.readLine(&reader.interface)).?;
+    const first = (try ndjson_reader.parseJsonLine(testing.allocator, first_line)).?;
     defer first.deinit();
     try testing.expectEqual(@as(i64, 123456789), first.value.object.get("long").?.integer);
 
-    const second = (try ndjson_reader.parseLine(testing.allocator, &reader.interface)).?;
+    const second_line = (try ndjson_reader.readLine(&reader.interface)).?;
+    const second = (try ndjson_reader.parseJsonLine(testing.allocator, second_line)).?;
     defer second.deinit();
     try testing.expectEqual(@as(i64, 1), second.value.object.get("id").?.integer);
     try testing.expect(second.value.object.get("long") == null);
 }
 
-test "parseLine rejects duplicate object fields" {
+test "parseJsonLine rejects duplicate object fields" {
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = "{\"id\":1,\"id\":2}\n" }};
 
@@ -388,10 +449,11 @@ test "parseLine rejects duplicate object fields" {
     defer ndjson_reader.deinit();
     var reader = testing.Reader.init(&buf, &calls);
 
-    try testing.expectError(error.DuplicateField, ndjson_reader.parseLine(testing.allocator, &reader.interface));
+    const line = (try ndjson_reader.readLine(&reader.interface)).?;
+    try testing.expectError(error.DuplicateField, ndjson_reader.parseJsonLine(testing.allocator, line));
 }
 
-test "parseLine rejects blank records" {
+test "parseJsonLine rejects blank records" {
     var buf: [4]u8 = undefined;
     const calls = [_]testing.Reader.Call{.{ .buffer = "\n" }};
 
@@ -399,5 +461,6 @@ test "parseLine rejects blank records" {
     defer ndjson_reader.deinit();
     var reader = testing.Reader.init(&buf, &calls);
 
-    try testing.expectError(error.UnexpectedEndOfInput, ndjson_reader.parseLine(testing.allocator, &reader.interface));
+    const line = (try ndjson_reader.readLine(&reader.interface)).?;
+    try testing.expectError(error.UnexpectedEndOfInput, ndjson_reader.parseJsonLine(testing.allocator, line));
 }
